@@ -115,37 +115,68 @@ This repository hosts specifications, architecture documents, and future referen
 
 ---
 
-## 📦 Repository Structure (Recommended)
+## 📦 Repository Structure
 
 ```
-/docs
-  /specs
-    LanguageSpec_v0.x.md
-    Grammar_v0.2.md
-    Semantics_v0.3.md
-    ABI_Codegen_v0.4.md
-    StdLib_v1.0.md
-    Exceptions_v0.7.md
-    ComplianceSuite_v0.6.md
-    CompilerArchitecture_v0.8.md
-  /curriculum
-  /teacher_guide
-  /marketing
-
-/compiler
-  /lexer
-  /parser
-  /ast
-  /semantics
-  /ir
-  /codegen
-  /linker
-  /runtime
-
-/stdlib
-/engine
-/ide
-/examples
+SuperPascal/
+├── book/                          # Educational book content (33 chapters)
+│   ├── 00_Preface/
+│   ├── 01_Introduction/
+│   ├── 02_ComputationalThinking/
+│   ├── ... (30 more chapters)
+│   └── 33_LanguageEvolutionAndContributing/
+│
+├── crates/compiler-rs/            # Rust compiler workspace
+│   ├── tokens/                    # Token definitions crate
+│   ├── lexer/                     # Lexical analyzer crate
+│   ├── .config/nextest.toml       # Test runner configuration
+│   └── tests/                     # Compiler tests
+│       ├── compliance/             # FPC compliance tests
+│       ├── integration/           # Integration tests
+│       └── unit/                  # Unit tests
+│
+├── docs/                          # Project documentation
+│   ├── COMPILER_IMPLEMENTATION_STRATEGY.md
+│   ├── FPC_*.md                   # FreePascal integration docs
+│   ├── TARGET_ARCHITECTURES.md
+│   └── ... (planning & reference docs)
+│
+├── languageSpecification/         # Language specification
+│   ├── 00_Overview.md
+│   ├── 01_LexicalStructure.md
+│   ├── 02_Grammar.md
+│   ├── algorithms/                 # Algorithm appendix
+│   ├── ecs/                        # ECS library spec
+│   └── intrinsicsAndDirectives/   # Platform intrinsics
+│
+├── lib/                           # Standard library (Pascal modules)
+│   ├── collision/                  # Collision detection
+│   ├── compression/                # Compression algorithms
+│   ├── crypto/                     # Cryptographic functions
+│   ├── ecs/                        # Entity Component System
+│   ├── game/                       # Game utilities (camera, LOS, pathfinding)
+│   ├── graphics/                    # Graphics primitives
+│   ├── math/                        # Mathematical functions
+│   ├── physics/                     # Physics simulation
+│   ├── sorting/                     # Sorting algorithms
+│   └── testing/                     # Unit testing framework
+│
+├── platforms/                      # Platform-specific documentation
+│   ├── ZealZ80/                    # Z80 @ 10 MHz (Tier 1)
+│   ├── CommanderX16/                # 65C02 @ 8 MHz (Tier 1)
+│   ├── Foenix65C816/                # 65C816 @ 6.29 MHz (Tier 2)
+│   ├── FoenixA2560M/                # MC68LC060 @ 66 MHz (Tier 2)
+│   └── RaspberryPi5/                # ARM Cortex-A76 @ 2.4 GHz (Tier 2)
+│
+├── graphics/                       # Graphics assets
+│   └── sprites/
+│
+├── scripts/                        # Utility scripts
+│   └── scrape_mikro_docs.py
+│
+├── justfile                        # Command runner (just)
+├── CONTRIBUTING.md                 # Contributing guide
+└── README.md                       # This file
 ```
 
 ---

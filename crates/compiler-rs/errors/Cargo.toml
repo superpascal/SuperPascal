@@ -1,0 +1,11 @@
+[package]
+name = "errors"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokens = { path = "../tokens" }
+
+[[example]]
+name = "enhanced_errors"
+path = "examples/enhanced_errors.rs"

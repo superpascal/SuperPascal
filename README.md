@@ -183,7 +183,7 @@ SuperPascal/
 
 ## 🔧 Build Targets
 
-**Target 1 — Host Compiler (Rust or C++):**
+**Target 1 — Rust Host Compiler:**
 
 * Fast iteration
 * CI integration

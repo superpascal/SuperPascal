@@ -43,6 +43,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object-zealz80"
+version = "0.1.0"
+dependencies = [
+ "backend-zealz80",
+ "ir",
+ "types",
+]
+
+[[package]]
 name = "parser"
 version = "0.1.0"
 dependencies = [

@@ -156,6 +156,9 @@ impl CodeGenerator {
             instructions.extend(self.generate_function(function));
         }
 
+        // Apply jump optimization (iterative, Turbo Pascal style)
+        self.optimize_jumps(&mut instructions);
+
         instructions
     }
 
@@ -695,6 +698,162 @@ impl CodeGenerator {
         // TODO: Calculate from function parameters and local variables
         0
     }
+
+    /// Optimize jumps: Convert JP (absolute, 3 bytes) to JR (relative, 2 bytes) when possible.
+    /// 
+    /// This implements Turbo Pascal's iterative jump optimization algorithm:
+    /// 1. Calculate instruction offsets
+    /// 2. For each jump, check if displacement fits in 8-bit signed range (-126 to +129)
+    /// 3. Convert JP to JR if possible
+    /// 4. Recalculate offsets (since JR is 1 byte shorter)
+    /// 5. Repeat until no more changes
+    /// 
+    /// This is iterative because each optimization reduces code size, potentially
+    /// enabling more jumps to be optimized.
+    fn optimize_jumps(&self, instructions: &mut Vec<Z80Instruction>) {
+        let mut changed = true;
+        let mut iterations = 0;
+        const MAX_ITERATIONS: usize = 100; // Safety limit
+
+        while changed && iterations < MAX_ITERATIONS {
+            changed = false;
+            iterations += 1;
+
+            // Calculate current instruction offsets
+            let offsets = self.calculate_instruction_offsets(instructions);
+            
+            // Build label-to-offset map
+            let mut label_offsets = std::collections::HashMap::new();
+            for (idx, inst) in instructions.iter().enumerate() {
+                if let Z80Instruction::Label { name } = inst {
+                    if let Some(&offset) = offsets.get(&idx) {
+                        label_offsets.insert(name.clone(), offset);
+                    }
+                }
+            }
+
+            // Try to convert each jump
+            for (idx, inst) in instructions.iter_mut().enumerate() {
+                if let Some(&jump_offset) = offsets.get(&idx) {
+                    match inst {
+                        Z80Instruction::Jump { label, near } if !*near => {
+                            if let Some(&target_offset) = label_offsets.get(label) {
+                                // Displacement is relative to the instruction AFTER the jump
+                                // JP is 3 bytes, so next instruction is at jump_offset + 3
+                                // JR would be 2 bytes, so next instruction would be at jump_offset + 2
+                                // We calculate as if we're using JR (2 bytes)
+                                let next_instruction_offset = jump_offset + 2;
+                                let displacement = target_offset as i32 - next_instruction_offset as i32;
+                                
+                                // Z80 JR range: -128 to +127 (8-bit signed)
+                                // Turbo Pascal uses -126 to +129 to account for instruction boundaries
+                                if displacement >= -126 && displacement <= 129 {
+                                    *near = true; // Convert to JR
+                                    changed = true;
+                                }
+                            }
+                        }
+                        Z80Instruction::JumpConditional { label, near, .. } if !*near => {
+                            if let Some(&target_offset) = label_offsets.get(label) {
+                                // Same calculation for conditional jumps
+                                let next_instruction_offset = jump_offset + 2;
+                                let displacement = target_offset as i32 - next_instruction_offset as i32;
+                                
+                                if displacement >= -126 && displacement <= 129 {
+                                    *near = true; // Convert to JR
+                                    changed = true;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        if iterations >= MAX_ITERATIONS {
+            eprintln!("Warning: Jump optimization reached max iterations");
+        }
+    }
+
+    /// Calculate byte offsets for each instruction in the instruction list.
+    /// Returns a map from instruction index to byte offset.
+    fn calculate_instruction_offsets(&self, instructions: &[Z80Instruction]) -> std::collections::HashMap<usize, usize> {
+        let mut offsets = std::collections::HashMap::new();
+        let mut current_offset = 0;
+
+        for (idx, inst) in instructions.iter().enumerate() {
+            offsets.insert(idx, current_offset);
+            current_offset += self.instruction_size(inst);
+        }
+
+        offsets
+    }
+
+    /// Calculate the size in bytes of a Z80 instruction.
+    /// This is used for offset calculation during jump optimization.
+    fn instruction_size(&self, inst: &Z80Instruction) -> usize {
+        match inst {
+            // 1-byte instructions
+            Z80Instruction::Return => 1,
+            Z80Instruction::Label { .. } => 0, // Labels don't generate code
+            
+            // 2-byte instructions
+            Z80Instruction::LoadImmediate { value, .. } => {
+                if *value <= 0xFF {
+                    2 // ld reg, 8-bit immediate
+                } else {
+                    3 // ld reg, 16-bit immediate
+                }
+            }
+            Z80Instruction::LoadRegister { .. } => 1,
+            Z80Instruction::Push { .. } => 1,
+            Z80Instruction::Pop { .. } => 1,
+            Z80Instruction::Add { .. } => 1,
+            Z80Instruction::Subtract { .. } => 1,
+            Z80Instruction::Compare { value, .. } => {
+                if value.is_some() {
+                    2 // cp, 8-bit immediate
+                } else {
+                    1 // cp, register
+                }
+            }
+            
+            // Jump instructions (size depends on near flag)
+            Z80Instruction::Jump { near, .. } => {
+                if *near {
+                    2 // jr (relative, 2 bytes)
+                } else {
+                    3 // jp (absolute, 3 bytes)
+                }
+            }
+            Z80Instruction::JumpConditional { near, .. } => {
+                if *near {
+                    2 // jr cc (relative, 2 bytes)
+                } else {
+                    3 // jp cc (absolute, 3 bytes)
+                }
+            }
+            
+            // 3-byte instructions
+            Z80Instruction::Call { .. } => 3,
+            
+            // Memory operations (variable size)
+            Z80Instruction::LoadMemory { addr, .. } => match addr {
+                MemoryAddress::Direct(_) => 3, // ld reg, (nn)
+                MemoryAddress::FrameRelative(_) => 3, // ld reg, (ix+d)
+                MemoryAddress::RegisterIndirect(_) => 1, // ld reg, (hl)
+            },
+            Z80Instruction::StoreMemory { addr, .. } => match addr {
+                MemoryAddress::Direct(_) => 3, // ld (nn), reg
+                MemoryAddress::FrameRelative(_) => 3, // ld (ix+d), reg
+                MemoryAddress::RegisterIndirect(_) => 1, // ld (hl), reg
+            },
+            
+            // Comments don't generate code
+            Z80Instruction::Comment { .. } => 0,
+        }
+    }
 }
 
 impl Default for CodeGenerator {
@@ -827,5 +986,182 @@ mod tests {
         
         // Should have prologue, epilogue, and label
         assert!(instructions.len() > 0);
+    }
+
+    // ===== Jump Optimization Tests =====
+
+    #[test]
+    fn test_jump_optimization_convert_jp_to_jr() {
+        let codegen = CodeGenerator::new();
+        let mut instructions = vec![
+            Z80Instruction::Label { name: "start".to_string() },
+            Z80Instruction::LoadImmediate { reg: Z80Register::A, value: 42 },
+            Z80Instruction::Jump { label: "end".to_string(), near: false }, // JP (3 bytes)
+            Z80Instruction::LoadImmediate { reg: Z80Register::B, value: 0 },
+            Z80Instruction::Label { name: "end".to_string() },
+            Z80Instruction::Return,
+        ];
+
+        // Before optimization: jump should be JP (near: false)
+        assert!(!matches!(
+            instructions[2],
+            Z80Instruction::Jump { near: true, .. }
+        ));
+
+        codegen.optimize_jumps(&mut instructions);
+
+        // After optimization: jump should be JR (near: true) since displacement is small
+        assert!(matches!(
+            instructions[2],
+            Z80Instruction::Jump { near: true, .. }
+        ));
+    }
+
+    #[test]
+    fn test_jump_optimization_keep_jp_for_large_displacement() {
+        let codegen = CodeGenerator::new();
+        let mut instructions = vec![
+            Z80Instruction::Label { name: "start".to_string() },
+        ];
+
+        // Add many instructions to create large displacement (> 129 bytes)
+        // Each LoadImmediate is 2 bytes, so we need > 65 instructions
+        for i in 0..100 {
+            instructions.push(Z80Instruction::LoadImmediate {
+                reg: Z80Register::A,
+                value: i as u16,
+            });
+        }
+
+        instructions.push(Z80Instruction::Jump {
+            label: "end".to_string(),
+            near: false, // JP (3 bytes)
+        });
+        
+        // Add more instructions to push the target label far away
+        for i in 0..100 {
+            instructions.push(Z80Instruction::LoadImmediate {
+                reg: Z80Register::B,
+                value: i as u16,
+            });
+        }
+        
+        instructions.push(Z80Instruction::Label { name: "end".to_string() });
+        instructions.push(Z80Instruction::Return);
+
+        let jump_idx = 101; // Jump is after 101 instructions (start label + 100 LoadImmediate)
+        codegen.optimize_jumps(&mut instructions);
+
+        // Jump should remain JP (near: false) since displacement is too large
+        // Displacement: (100 * 2) bytes after jump = 200 bytes, which is > 129
+        assert!(matches!(
+            instructions[jump_idx],
+            Z80Instruction::Jump { near: false, .. }
+        ));
+    }
+
+    #[test]
+    fn test_jump_optimization_conditional_jump() {
+        let codegen = CodeGenerator::new();
+        let mut instructions = vec![
+            Z80Instruction::Label { name: "start".to_string() },
+            Z80Instruction::Compare {
+                reg: Z80Register::A,
+                value: Some(0),
+            },
+            Z80Instruction::JumpConditional {
+                condition: Condition::Zero,
+                label: "end".to_string(),
+                near: false, // JP cc (3 bytes)
+            },
+            Z80Instruction::LoadImmediate { reg: Z80Register::A, value: 1 },
+            Z80Instruction::Label { name: "end".to_string() },
+            Z80Instruction::Return,
+        ];
+
+        codegen.optimize_jumps(&mut instructions);
+
+        // Conditional jump should be converted to JR cc
+        assert!(matches!(
+            instructions[2],
+            Z80Instruction::JumpConditional { near: true, .. }
+        ));
+    }
+
+    #[test]
+    fn test_jump_optimization_iterative() {
+        let codegen = CodeGenerator::new();
+        // Create a scenario where multiple optimizations are needed
+        let mut instructions = vec![
+            Z80Instruction::Label { name: "start".to_string() },
+            Z80Instruction::Jump {
+                label: "mid".to_string(),
+                near: false, // JP
+            },
+            // Add some instructions
+            Z80Instruction::LoadImmediate { reg: Z80Register::A, value: 1 },
+            Z80Instruction::LoadImmediate { reg: Z80Register::B, value: 2 },
+            Z80Instruction::Label { name: "mid".to_string() },
+            Z80Instruction::Jump {
+                label: "end".to_string(),
+                near: false, // JP
+            },
+            Z80Instruction::LoadImmediate { reg: Z80Register::C, value: 3 },
+            Z80Instruction::Label { name: "end".to_string() },
+            Z80Instruction::Return,
+        ];
+
+        codegen.optimize_jumps(&mut instructions);
+
+        // Both jumps should be optimized to JR
+        assert!(matches!(
+            instructions[1],
+            Z80Instruction::Jump { near: true, .. }
+        ));
+        assert!(matches!(
+            instructions[5],
+            Z80Instruction::Jump { near: true, .. }
+        ));
+    }
+
+    #[test]
+    fn test_instruction_size_calculation() {
+        let codegen = CodeGenerator::new();
+
+        assert_eq!(codegen.instruction_size(&Z80Instruction::Return), 1);
+        assert_eq!(
+            codegen.instruction_size(&Z80Instruction::LoadImmediate {
+                reg: Z80Register::A,
+                value: 42
+            }),
+            2
+        );
+        assert_eq!(
+            codegen.instruction_size(&Z80Instruction::LoadImmediate {
+                reg: Z80Register::HL,
+                value: 0x1234
+            }),
+            3
+        );
+        assert_eq!(
+            codegen.instruction_size(&Z80Instruction::Jump {
+                label: "test".to_string(),
+                near: false
+            }),
+            3
+        );
+        assert_eq!(
+            codegen.instruction_size(&Z80Instruction::Jump {
+                label: "test".to_string(),
+                near: true
+            }),
+            2
+        );
+        assert_eq!(
+            codegen.instruction_size(&Z80Instruction::Label {
+                name: "test".to_string()
+            }),
+            0
+        );
     }
 }

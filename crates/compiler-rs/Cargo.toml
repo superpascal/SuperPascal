@@ -11,8 +11,8 @@ members = [
     "ir",
     "runtime-spec",
     "backends/backend-zealz80",
+    "objects/object-zealz80",
     # "diagnostics",  # Will be added in Phase 5
-    # "objects/object-zealz80",  # Will be added in Phase 4
     # "driver",  # Will be added in Phase 5
 ]
 resolver = "3"

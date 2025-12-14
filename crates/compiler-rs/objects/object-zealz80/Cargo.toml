@@ -1,0 +1,9 @@
+[package]
+name = "object-zealz80"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+backend-zealz80 = { path = "../../backends/backend-zealz80" }
+ir = { path = "../../ir" }
+types = { path = "../../types" }

@@ -117,6 +117,8 @@ pub enum TokenKind {
     KwPrivate,
     KwProtected,
     KwPublic,
+    KwPublished,
+    KwStrict,
     KwVirtual,
     KwProperty,
     KwRead,
@@ -514,6 +516,8 @@ pub fn lookup_keyword(s: &str) -> Option<TokenKind> {
     if eq_ignore_ascii_case(s, "private") { return Some(TokenKind::KwPrivate); }
     if eq_ignore_ascii_case(s, "protected") { return Some(TokenKind::KwProtected); }
     if eq_ignore_ascii_case(s, "public") { return Some(TokenKind::KwPublic); }
+    if eq_ignore_ascii_case(s, "published") { return Some(TokenKind::KwPublished); }
+    if eq_ignore_ascii_case(s, "strict") { return Some(TokenKind::KwStrict); }
     if eq_ignore_ascii_case(s, "virtual") { return Some(TokenKind::KwVirtual); }
     if eq_ignore_ascii_case(s, "property") { return Some(TokenKind::KwProperty); }
     if eq_ignore_ascii_case(s, "read") { return Some(TokenKind::KwRead); }

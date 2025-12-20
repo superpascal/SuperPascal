@@ -44,11 +44,14 @@ pub enum Node {
     CallExpr(CallExpr),
     IndexExpr(IndexExpr),
     FieldExpr(FieldExpr),
+    DerefExpr(DerefExpr),
 
     // ===== Types =====
     RecordType(RecordType),
     ArrayType(ArrayType),
     NamedType(NamedType),
+    PointerType(PointerType),
+    ClassType(ClassType),
 }
 
 /// Program node - root of the AST
@@ -399,6 +402,13 @@ pub struct FieldExpr {
     pub span: Span,
 }
 
+/// Pointer dereference expression (^pointer)
+#[derive(Debug, Clone, PartialEq)]
+pub struct DerefExpr {
+    pub pointer: Box<Node>,         // Expression node (pointer)
+    pub span: Span,
+}
+
 /// Record type
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordType {
@@ -426,6 +436,48 @@ pub struct ArrayType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NamedType {
     pub name: String,
+    pub span: Span,
+}
+
+/// Pointer type (^type)
+#[derive(Debug, Clone, PartialEq)]
+pub struct PointerType {
+    pub base_type: Box<Node>,  // The type being pointed to
+    pub span: Span,
+}
+
+/// Visibility modifier for class members
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Default,    // Default visibility (usually public in interface, private in implementation)
+    Private,
+    StrictPrivate,
+    Protected,
+    StrictProtected,
+    Public,
+    Published,
+}
+
+/// Class member (field, method, property, etc.)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassMember {
+    Field(Node),           // VarDecl node
+    Method(Node),         // ProcDecl or FuncDecl node
+    Property(Node),       // PropertyDecl node
+    Constructor(Node),    // ProcDecl node (constructor)
+    Destructor(Node),     // ProcDecl node (destructor)
+    Type(Node),           // TypeDecl node (nested type)
+    Const(Node),          // ConstDecl node (nested constant)
+}
+
+/// Class type declaration
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassType {
+    pub base_classes: Vec<String>,  // Parent classes/interfaces (inheritance)
+    pub is_forward_decl: bool,      // Forward declaration (class;)
+    pub is_meta_class: bool,        // Meta-class (class of Type)
+    pub meta_class_type: Option<Box<Node>>, // Type for meta-class
+    pub members: Vec<(Visibility, ClassMember)>, // Class members with visibility
     pub span: Span,
 }
 
@@ -464,9 +516,12 @@ impl Node {
             Node::CallExpr(c) => c.span,
             Node::IndexExpr(i) => i.span,
             Node::FieldExpr(f) => f.span,
+            Node::DerefExpr(d) => d.span,
             Node::RecordType(r) => r.span,
             Node::ArrayType(a) => a.span,
             Node::NamedType(n) => n.span,
+            Node::PointerType(p) => p.span,
+            Node::ClassType(c) => c.span,
         }
     }
 }

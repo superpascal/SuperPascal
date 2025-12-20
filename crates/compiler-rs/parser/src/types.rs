@@ -16,6 +16,14 @@ impl super::Parser {
             .map(|t| t.span)
             .unwrap_or_else(|| Span::at(0, 1, 1));
 
+        // Check for PACKED keyword (applies to RECORD or ARRAY)
+        let is_packed = if self.check(&TokenKind::KwPacked) {
+            self.advance()?; // consume PACKED
+            true
+        } else {
+            false
+        };
+
         // Check for pointer type: ^type
         if self.check(&TokenKind::Caret) {
             self.advance()?; // consume ^
@@ -26,7 +34,7 @@ impl super::Parser {
                 span,
             }))
         } else if self.check(&TokenKind::KwArray) {
-            self.advance()?;
+            self.advance()?; // consume ARRAY
             self.consume(TokenKind::LeftBracket, "[")?;
             let index_type = self.parse_type()?;
             self.consume(TokenKind::RightBracket, "]")?;
@@ -34,6 +42,7 @@ impl super::Parser {
             let element_type = self.parse_type()?;
             let span = start_span.merge(element_type.span());
             Ok(Node::ArrayType(ast::ArrayType {
+                is_packed,
                 index_type: Box::new(index_type),
                 element_type: Box::new(element_type),
                 span,
@@ -87,6 +96,7 @@ impl super::Parser {
             let end_token = self.consume(TokenKind::KwEnd, "END")?;
             let span = start_span.merge(end_token.span);
             Ok(Node::RecordType(ast::RecordType {
+                is_packed,
                 fields,
                 variant,
                 span,
@@ -94,6 +104,12 @@ impl super::Parser {
         } else if self.check(&TokenKind::KwClass) {
             // Class parsing is in classes.rs
             self.parse_class_type()
+        } else if self.check(&TokenKind::KwInterface) {
+            // Interface type: INTERFACE [base_interfaces] [GUID] [methods/properties] END
+            self.parse_interface_type()
+        } else if self.check(&TokenKind::KwProcedure) || self.check(&TokenKind::KwFunction) {
+            // Procedural type: PROCEDURE [params] [OF OBJECT] or FUNCTION [params]: return_type [OF OBJECT]
+            self.parse_procedural_type()
         } else {
             // Accept either identifier or primitive type keywords
             let name_token = if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
@@ -155,6 +171,199 @@ impl super::Parser {
                 span: name_token.span,
             }))
         }
+    }
+
+    /// Parse procedural type: PROCEDURE [params] [OF OBJECT] or FUNCTION [params]: return_type [OF OBJECT]
+    fn parse_procedural_type(&mut self) -> ParserResult<Node> {
+        let start_span = self
+            .current()
+            .map(|t| t.span)
+            .unwrap_or_else(|| Span::at(0, 1, 1));
+
+        let is_function = self.check(&TokenKind::KwFunction);
+        self.advance()?; // consume PROCEDURE or FUNCTION
+
+        // Parse optional parameter list
+        let params = if self.check(&TokenKind::LeftParen) {
+            self.consume(TokenKind::LeftParen, "(")?;
+            let mut params = vec![];
+            if !self.check(&TokenKind::RightParen) {
+                loop {
+                    // Parse parameter: [var|const] identifier {, identifier} : type
+                    let mut param_names = vec![];
+                    let param_mode = if self.check(&TokenKind::KwVar) {
+                        self.advance()?;
+                        ast::ParamType::Var
+                    } else if self.check(&TokenKind::KwConst) {
+                        self.advance()?;
+                        ast::ParamType::Const
+                    } else {
+                        ast::ParamType::Value
+                    };
+                    
+                    loop {
+                        let name_token = self.consume(TokenKind::Identifier(String::new()), "identifier")?;
+                        let name = match &name_token.kind {
+                            TokenKind::Identifier(name) => name.clone(),
+                            _ => unreachable!(),
+                        };
+                        param_names.push(name);
+                        if !self.check(&TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance()?; // consume comma
+                    }
+                    
+                    self.consume(TokenKind::Colon, ":")?;
+                    let param_type = self.parse_type()?;
+                    let param_span = start_span.merge(param_type.span());
+                    
+                    params.push(ast::Param {
+                        names: param_names,
+                        param_type: param_mode,
+                        type_expr: Box::new(param_type),
+                        span: param_span,
+                    });
+                    if !self.check(&TokenKind::Semicolon) {
+                        break;
+                    }
+                    self.advance()?; // consume semicolon
+                }
+            }
+            self.consume(TokenKind::RightParen, ")")?;
+            params
+        } else {
+            vec![]
+        };
+
+        // Parse return type for functions
+        let return_type = if is_function {
+            self.consume(TokenKind::Colon, ":")?;
+            Some(Box::new(self.parse_type()?))
+        } else {
+            None
+        };
+
+        // Parse optional "OF OBJECT" for method pointers
+        let is_method_pointer = if self.check(&TokenKind::KwOf) {
+            self.advance()?; // consume OF
+            if self.check(&TokenKind::KwObject) {
+                self.advance()?; // consume OBJECT
+                true
+            } else {
+                return Err(ParserError::InvalidSyntax {
+                    message: "Expected 'OBJECT' after 'OF'".to_string(),
+                    span: self.current().map(|t| t.span).unwrap_or_else(|| Span::at(0, 1, 1)),
+                });
+            }
+        } else {
+            false
+        };
+
+        let span = if let Some(ref ret_type) = return_type {
+            start_span.merge(ret_type.span())
+        } else {
+            start_span
+        };
+
+        Ok(Node::ProceduralType(ast::ProceduralType {
+            is_function,
+            params,
+            return_type,
+            is_method_pointer,
+            span,
+        }))
+    }
+
+    /// Parse interface type: INTERFACE [base_interfaces] [GUID] [methods/properties] END
+    fn parse_interface_type(&mut self) -> ParserResult<Node> {
+        let start_span = self
+            .current()
+            .map(|t| t.span)
+            .unwrap_or_else(|| Span::at(0, 1, 1));
+
+        self.consume(TokenKind::KwInterface, "INTERFACE")?;
+
+        // Parse optional base interfaces: INTERFACE(IBase1, IBase2)
+        let base_interfaces = if self.check(&TokenKind::LeftParen) {
+            self.advance()?; // consume (
+            let mut bases = vec![];
+            loop {
+                let name_token = self.consume(TokenKind::Identifier(String::new()), "interface name")?;
+                let name = match &name_token.kind {
+                    TokenKind::Identifier(name) => name.clone(),
+                    _ => unreachable!(),
+                };
+                bases.push(name);
+                if !self.check(&TokenKind::Comma) {
+                    break;
+                }
+                self.advance()?; // consume comma
+            }
+            self.consume(TokenKind::RightParen, ")")?;
+            bases
+        } else {
+            vec![]
+        };
+
+        // Parse optional GUID: ['{GUID-STRING}']
+        let guid = if self.check(&TokenKind::LeftBracket) {
+            self.advance()?; // consume [
+            if let Some(TokenKind::StringLiteral(_)) = self.current().map(|t| &t.kind) {
+                let guid_token = self.current().unwrap().clone();
+                let guid_value = match &guid_token.kind {
+                    TokenKind::StringLiteral(s) => s.clone(),
+                    _ => unreachable!(),
+                };
+                self.advance()?; // consume string
+                self.consume(TokenKind::RightBracket, "]")?;
+                Some(guid_value)
+            } else {
+                return Err(ParserError::InvalidSyntax {
+                    message: "Expected GUID string in brackets".to_string(),
+                    span: self.current().map(|t| t.span).unwrap_or_else(|| Span::at(0, 1, 1)),
+                });
+            }
+        } else {
+            None
+        };
+
+        // Parse methods and properties
+        let mut methods = vec![];
+        let mut properties = vec![];
+
+        while !self.check(&TokenKind::KwEnd) {
+            if self.check(&TokenKind::KwProcedure) {
+                // Parse procedure forward declaration
+                let proc = self.parse_procedure_forward_decl()?;
+                methods.push(proc);
+            } else if self.check(&TokenKind::KwFunction) {
+                // Parse function forward declaration
+                let func = self.parse_function_forward_decl()?;
+                methods.push(func);
+            } else if self.check(&TokenKind::KwProperty) {
+                // Parse property declaration
+                let property = super::properties::parse_property_decl(self)?;
+                properties.push(property);
+            } else {
+                return Err(ParserError::InvalidSyntax {
+                    message: "Expected method or property declaration in interface".to_string(),
+                    span: self.current().map(|t| t.span).unwrap_or_else(|| Span::at(0, 1, 1)),
+                });
+            }
+        }
+
+        let end_token = self.consume(TokenKind::KwEnd, "END")?;
+        let span = start_span.merge(end_token.span);
+
+        Ok(Node::InterfaceType(ast::InterfaceType {
+            name: None, // Interface name is set by the type declaration
+            guid,
+            base_interfaces,
+            methods,
+            properties,
+            span,
+        }))
     }
 
     /// Parse field declaration: identifier_list : type
@@ -844,6 +1053,155 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    // ===== Interface Type Tests =====
+
+    #[test]
+    fn test_parse_interface_type_simple() {
+        let source = r#"
+            program Test;
+            type
+                IMyInterface = interface
+                    procedure Method1;
+                    function Method2: integer;
+                end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        let program = result.unwrap();
+        if let Node::Program(prog) = program {
+            if let Node::Block(block) = *prog.block {
+                assert_eq!(block.type_decls.len(), 1);
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    assert_eq!(type_decl.name, "IMyInterface");
+                    if let Node::InterfaceType(interface) = type_decl.type_expr.as_ref() {
+                        assert_eq!(interface.base_interfaces.len(), 0);
+                        assert_eq!(interface.guid, None);
+                        assert_eq!(interface.methods.len(), 2);
+                        assert_eq!(interface.properties.len(), 0);
+                    } else {
+                        panic!("Expected InterfaceType");
+                    }
+                } else {
+                    panic!("Expected TypeDecl");
+                }
+            } else {
+                panic!("Expected Block");
+            }
+        } else {
+            panic!("Expected Program");
+        }
+    }
+
+    #[test]
+    fn test_parse_interface_type_with_base() {
+        let source = r#"
+            program Test;
+            type
+                IMyInterface = interface(IBaseInterface)
+                    procedure Method1;
+                end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        let program = result.unwrap();
+        if let Node::Program(prog) = program {
+            if let Node::Block(block) = *prog.block {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::InterfaceType(interface) = type_decl.type_expr.as_ref() {
+                        assert_eq!(interface.base_interfaces.len(), 1);
+                        assert_eq!(interface.base_interfaces[0], "IBaseInterface");
+                    } else {
+                        panic!("Expected InterfaceType");
+                    }
+                } else {
+                    panic!("Expected TypeDecl");
+                }
+            } else {
+                panic!("Expected Block");
+            }
+        } else {
+            panic!("Expected Program");
+        }
+    }
+
+    #[test]
+    fn test_parse_interface_type_with_guid() {
+        let source = r#"
+            program Test;
+            type
+                IMyInterface = interface
+                    ['{12345678-1234-1234-1234-123456789ABC}']
+                    procedure Method1;
+                end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        let program = result.unwrap();
+        if let Node::Program(prog) = program {
+            if let Node::Block(block) = *prog.block {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::InterfaceType(interface) = type_decl.type_expr.as_ref() {
+                        assert!(interface.guid.is_some());
+                        assert_eq!(interface.guid.as_ref().unwrap(), "{12345678-1234-1234-1234-123456789ABC}");
+                    } else {
+                        panic!("Expected InterfaceType");
+                    }
+                } else {
+                    panic!("Expected TypeDecl");
+                }
+            } else {
+                panic!("Expected Block");
+            }
+        } else {
+            panic!("Expected Program");
+        }
+    }
+
+    #[test]
+    fn test_parse_interface_type_with_properties() {
+        let source = r#"
+            program Test;
+            type
+                IMyInterface = interface
+                    property Prop1: integer read GetProp1 write SetProp1;
+                    procedure Method1;
+                end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        let program = result.unwrap();
+        if let Node::Program(prog) = program {
+            if let Node::Block(block) = *prog.block {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::InterfaceType(interface) = type_decl.type_expr.as_ref() {
+                        assert_eq!(interface.properties.len(), 1);
+                        assert_eq!(interface.methods.len(), 1);
+                    } else {
+                        panic!("Expected InterfaceType");
+                    }
+                } else {
+                    panic!("Expected TypeDecl");
+                }
+            } else {
+                panic!("Expected Block");
+            }
+        } else {
+            panic!("Expected Program");
         }
     }
 }

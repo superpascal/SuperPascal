@@ -46,6 +46,8 @@ pub enum Node {
     IndexExpr(IndexExpr),
     FieldExpr(FieldExpr),
     DerefExpr(DerefExpr),
+    InheritedExpr(InheritedExpr),
+    AddressOfExpr(AddressOfExpr),
 
     // ===== Types =====
     RecordType(RecordType),
@@ -55,6 +57,8 @@ pub enum Node {
     ClassType(ClassType),
     SetType(SetType),
     StringType(StringType),
+    ProceduralType(ProceduralType),
+    InterfaceType(InterfaceType),
     
     // ===== Set Literals =====
     SetLiteral(SetLiteral),
@@ -354,6 +358,10 @@ pub enum BinaryOp {
     
     // Set membership
     In,       // in (set membership)
+    
+    // Type operations
+    Is,       // is (type checking)
+    As,       // as (type casting)
 }
 
 /// Unary expression
@@ -370,6 +378,7 @@ pub enum UnaryOp {
     Plus,     // + (unary plus)
     Minus,    // - (unary minus)
     Not,      // not
+    AddressOf, // @ (address-of operator)
 }
 
 /// Literal expression
@@ -426,9 +435,25 @@ pub struct DerefExpr {
     pub span: Span,
 }
 
+/// Inherited expression (INHERITED [method_name] [args])
+#[derive(Debug, Clone, PartialEq)]
+pub struct InheritedExpr {
+    pub method_name: Option<String>, // Optional method name (if not present, calls same method)
+    pub args: Vec<Node>,            // Optional arguments
+    pub span: Span,
+}
+
+/// Address-of expression (@variable)
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddressOfExpr {
+    pub target: Box<Node>,          // Expression node (variable or field)
+    pub span: Span,
+}
+
 /// Record type
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordType {
+    pub is_packed: bool,            // true if PACKED keyword is present
     pub fields: Vec<FieldDecl>,     // Field declarations
     pub variant: Option<VariantPart>, // Optional variant part (CASE)
     pub span: Span,
@@ -463,6 +488,7 @@ pub struct Variant {
 /// Array type
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayType {
+    pub is_packed: bool,            // true if PACKED keyword is present
     pub index_type: Box<Node>,      // Type node (index type)
     pub element_type: Box<Node>,    // Type node (element type)
     pub span: Span,
@@ -493,6 +519,27 @@ pub struct SetType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StringType {
     pub length: Option<Box<Node>>,  // Optional length expression (for STRING[n])
+    pub span: Span,
+}
+
+/// Procedural type (procedure or function type)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProceduralType {
+    pub is_function: bool,          // true for FUNCTION, false for PROCEDURE
+    pub params: Vec<Param>,         // Parameter list (can be empty)
+    pub return_type: Option<Box<Node>>, // Return type (only for functions)
+    pub is_method_pointer: bool,    // true if "OF OBJECT" is present
+    pub span: Span,
+}
+
+/// Interface type (Object Pascal interface)
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceType {
+    pub name: Option<String>,       // Optional interface name
+    pub guid: Option<String>,       // Optional GUID
+    pub base_interfaces: Vec<String>, // List of base interfaces
+    pub methods: Vec<Node>,         // Method declarations (ProcDecl, FuncDecl)
+    pub properties: Vec<Node>,       // Property declarations
     pub span: Span,
 }
 
@@ -585,6 +632,8 @@ impl Node {
             Node::IndexExpr(i) => i.span,
             Node::FieldExpr(f) => f.span,
             Node::DerefExpr(d) => d.span,
+            Node::InheritedExpr(i) => i.span,
+            Node::AddressOfExpr(a) => a.span,
             Node::RecordType(r) => r.span,
             Node::ArrayType(a) => a.span,
             Node::NamedType(n) => n.span,
@@ -592,6 +641,8 @@ impl Node {
             Node::ClassType(c) => c.span,
             Node::SetType(s) => s.span,
             Node::StringType(s) => s.span,
+            Node::ProceduralType(p) => p.span,
+            Node::InterfaceType(i) => i.span,
             Node::SetLiteral(s) => s.span,
         }
     }
@@ -1360,6 +1411,7 @@ mod tests {
             span,
         };
         let record_type = Node::RecordType(RecordType {
+            is_packed: false,
             fields: vec![field_decl],
             variant: None,
             span,
@@ -1371,6 +1423,7 @@ mod tests {
     fn test_array_type() {
         let span = Span::new(0, 30, 1, 1);
         let array_type = Node::ArrayType(ArrayType {
+            is_packed: false,
             index_type: Box::new(Node::NamedType(NamedType {
                 name: "integer".to_string(),
                 span,

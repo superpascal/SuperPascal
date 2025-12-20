@@ -594,6 +594,10 @@ impl Lexer {
                 self.advance();
                 TokenKind::Caret
             }
+            ('@', _) => {
+                self.advance();
+                TokenKind::At
+            }
             _ => {
                 return Err(LexerError::InvalidCharacter {
                     ch,

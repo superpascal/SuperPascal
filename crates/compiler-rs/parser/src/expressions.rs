@@ -114,6 +114,49 @@ impl super::Parser {
                     span,
                 }))
             }
+            Some(TokenKind::At) => {
+                // Address-of operator: @variable
+                self.advance()?; // consume @
+                let target = self.parse_prefix()?;
+                let span = start_span.merge(target.span());
+                Ok(Node::AddressOfExpr(ast::AddressOfExpr {
+                    target: Box::new(target),
+                    span,
+                }))
+            }
+            Some(TokenKind::KwInherited) => {
+                // INHERITED [method_name] [args]
+                self.advance()?; // consume INHERITED
+                let method_name = if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
+                    let name_token = self.current().unwrap().clone();
+                    let name = match &name_token.kind {
+                        TokenKind::Identifier(name) => name.clone(),
+                        _ => unreachable!(),
+                    };
+                    self.advance()?;
+                    Some(name)
+                } else {
+                    None
+                };
+                
+                let args = if self.check(&TokenKind::LeftParen) {
+                    self.parse_args()?
+                } else {
+                    vec![]
+                };
+                
+                let span = if let Some(ref last_arg) = args.last() {
+                    start_span.merge(last_arg.span())
+                } else {
+                    start_span
+                };
+                
+                Ok(Node::InheritedExpr(ast::InheritedExpr {
+                    method_name,
+                    args,
+                    span,
+                }))
+            }
             Some(TokenKind::LeftParen) => {
                 self.advance()?;
                 let expr = self.parse_expression()?;
@@ -267,6 +310,8 @@ impl super::Parser {
             Some(TokenKind::KwAnd) => Some(ast::BinaryOp::And),
             Some(TokenKind::KwOr) => Some(ast::BinaryOp::Or),
             Some(TokenKind::KwIn) => Some(ast::BinaryOp::In),
+            Some(TokenKind::KwIs) => Some(ast::BinaryOp::Is),
+            Some(TokenKind::KwAs) => Some(ast::BinaryOp::As),
             _ => None,
         }
     }
@@ -277,10 +322,10 @@ impl super::Parser {
             // Logical operators (lowest precedence)
             ast::BinaryOp::Or => 1,
             ast::BinaryOp::And => 2,
-            // Relational operators (including set membership)
+            // Relational operators (including set membership and type operations)
             ast::BinaryOp::Equal | ast::BinaryOp::NotEqual | ast::BinaryOp::Less
             | ast::BinaryOp::LessEqual | ast::BinaryOp::Greater | ast::BinaryOp::GreaterEqual
-            | ast::BinaryOp::In => 3,
+            | ast::BinaryOp::In | ast::BinaryOp::Is | ast::BinaryOp::As => 3,
             // Additive operators
             ast::BinaryOp::Add | ast::BinaryOp::Subtract => 4,
             // Multiplicative operators (highest precedence)
@@ -497,6 +542,180 @@ mod tests {
                     } else {
                         panic!("Expected BinaryExpr with IN operator");
                     }
+                }
+            }
+        }
+    }
+
+    // ===== Advanced Expression Tests =====
+
+    #[test]
+    fn test_parse_inherited_without_method() {
+        let source = r#"
+            program Test;
+            begin
+                inherited;
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::CallStmt(call) = &block.statements[0] {
+                    // INHERITED without method name is parsed as CallStmt with empty name
+                    assert_eq!(call.name, "");
+                    assert_eq!(call.args.len(), 0);
+                } else {
+                    panic!("Expected CallStmt for INHERITED statement");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_inherited_with_method() {
+        let source = r#"
+            program Test;
+            begin
+                inherited DoSomething;
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::CallStmt(call) = &block.statements[0] {
+                    assert_eq!(call.name, "DoSomething");
+                    assert_eq!(call.args.len(), 0);
+                } else {
+                    panic!("Expected CallStmt for INHERITED statement");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_inherited_with_args() {
+        let source = r#"
+            program Test;
+            begin
+                inherited DoSomething(x, y);
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::CallStmt(call) = &block.statements[0] {
+                    assert_eq!(call.name, "DoSomething");
+                    assert_eq!(call.args.len(), 2);
+                } else {
+                    panic!("Expected CallStmt for INHERITED statement");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_address_of_operator() {
+        let source = r#"
+            program Test;
+            var x: integer;
+            begin
+                writeln(@x);
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::CallStmt(call) = &block.statements[0] {
+                    assert_eq!(call.args.len(), 1);
+                    if let Node::AddressOfExpr(addr) = &call.args[0] {
+                        if let Node::IdentExpr(ident) = addr.target.as_ref() {
+                            assert_eq!(ident.name, "x");
+                        } else {
+                            panic!("Expected IdentExpr in address-of target");
+                        }
+                    } else {
+                        panic!("Expected AddressOfExpr");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_is_operator() {
+        let source = r#"
+            program Test;
+            var obj: TObject;
+            begin
+                if obj is TMyClass then
+                    writeln('Yes');
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::IfStmt(if_stmt) = &block.statements[0] {
+                    if let Node::BinaryExpr(bin_expr) = if_stmt.condition.as_ref() {
+                        assert_eq!(bin_expr.op, ast::BinaryOp::Is);
+                        if let Node::IdentExpr(ident) = bin_expr.left.as_ref() {
+                            assert_eq!(ident.name, "obj");
+                        }
+                        if let Node::IdentExpr(ident) = bin_expr.right.as_ref() {
+                            assert_eq!(ident.name, "TMyClass");
+                        }
+                    } else {
+                        panic!("Expected BinaryExpr with IS operator");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_as_operator() {
+        let source = r#"
+            program Test;
+            var obj: TObject;
+            var result: TMyClass;
+            begin
+                result := obj as TMyClass;
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::AssignStmt(assign) = &block.statements[0] {
+                    if let Node::BinaryExpr(bin_expr) = assign.value.as_ref() {
+                        assert_eq!(bin_expr.op, ast::BinaryOp::As);
+                        if let Node::IdentExpr(ident) = bin_expr.left.as_ref() {
+                            assert_eq!(ident.name, "obj");
+                        }
+                        if let Node::IdentExpr(ident) = bin_expr.right.as_ref() {
+                            assert_eq!(ident.name, "TMyClass");
+                        }
+                    } else {
+                        panic!("Expected BinaryExpr with AS operator");
+                    }
+                } else {
+                    panic!("Expected AssignStmt");
                 }
             }
         }

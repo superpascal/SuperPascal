@@ -80,10 +80,13 @@ pub enum TokenKind {
     KwIf,
     KwIn,      // in (set membership operator)
     KwInteger,
+    KwIs,      // is (type checking operator)
+    KwAs,      // as (type casting operator)
     KwMod,
     KwNot,
     KwOf,
     KwOr,
+    KwPacked,    // PACKED keyword for packed records/arrays
     KwProcedure,
     KwProgram,
     KwRecord,
@@ -116,6 +119,7 @@ pub enum TokenKind {
     KwClass,
     KwConstructor,
     KwDestructor,
+    KwObject,    // OBJECT keyword (for method pointers)
     KwOverride,
     KwPrivate,
     KwProtected,
@@ -240,10 +244,13 @@ impl Token {
                 | TokenKind::KwIf
                 | TokenKind::KwIn
                 | TokenKind::KwInteger
+                | TokenKind::KwIs
+                | TokenKind::KwAs
                 | TokenKind::KwMod
                 | TokenKind::KwNot
                 | TokenKind::KwOf
                 | TokenKind::KwOr
+                | TokenKind::KwPacked
                 | TokenKind::KwProcedure
                 | TokenKind::KwProgram
                 | TokenKind::KwRecord
@@ -272,6 +279,7 @@ impl Token {
                 | TokenKind::KwClass
                 | TokenKind::KwConstructor
                 | TokenKind::KwDestructor
+                | TokenKind::KwObject
                 | TokenKind::KwOverride
                 | TokenKind::KwPrivate
                 | TokenKind::KwProtected
@@ -486,11 +494,15 @@ pub fn lookup_keyword(s: &str) -> Option<TokenKind> {
     if eq_ignore_ascii_case(s, "goto") { return Some(TokenKind::KwGoto); }
     if eq_ignore_ascii_case(s, "if") { return Some(TokenKind::KwIf); }
     if eq_ignore_ascii_case(s, "in") { return Some(TokenKind::KwIn); }
+    if eq_ignore_ascii_case(s, "inherited") { return Some(TokenKind::KwInherited); }
     if eq_ignore_ascii_case(s, "integer") { return Some(TokenKind::KwInteger); }
+    if eq_ignore_ascii_case(s, "is") { return Some(TokenKind::KwIs); }
+    if eq_ignore_ascii_case(s, "as") { return Some(TokenKind::KwAs); }
     if eq_ignore_ascii_case(s, "mod") { return Some(TokenKind::KwMod); }
     if eq_ignore_ascii_case(s, "not") { return Some(TokenKind::KwNot); }
     if eq_ignore_ascii_case(s, "of") { return Some(TokenKind::KwOf); }
     if eq_ignore_ascii_case(s, "or") { return Some(TokenKind::KwOr); }
+    if eq_ignore_ascii_case(s, "packed") { return Some(TokenKind::KwPacked); }
     if eq_ignore_ascii_case(s, "procedure") { return Some(TokenKind::KwProcedure); }
     if eq_ignore_ascii_case(s, "program") { return Some(TokenKind::KwProgram); }
     if eq_ignore_ascii_case(s, "record") { return Some(TokenKind::KwRecord); }

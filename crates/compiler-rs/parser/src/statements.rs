@@ -30,6 +30,9 @@ impl super::Parser {
         } else if self.check(&TokenKind::KwBegin) {
             // Compound statement: BEGIN statements END
             self.parse_compound_statement()
+        } else if self.check(&TokenKind::KwInherited) {
+            // INHERITED [method_name] [args] - can be used as a statement
+            self.parse_inherited_statement()
         } else if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
             // Could be assignment or procedure call
             // Check if it's an assignment by looking ahead for :=
@@ -536,6 +539,62 @@ impl super::Parser {
 
         Ok(Node::RaiseStmt(ast::RaiseStmt {
             exception,
+            span,
+        }))
+    }
+
+    /// Parse inherited statement: INHERITED [method_name] [args]
+    fn parse_inherited_statement(&mut self) -> ParserResult<Node> {
+        let start_span = self
+            .current()
+            .map(|t| t.span)
+            .unwrap_or_else(|| Span::at(0, 1, 1));
+
+        self.consume(TokenKind::KwInherited, "INHERITED")?;
+
+        // Optional method name
+        let name = if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
+            let name_token = self.current().unwrap().clone();
+            let name = match &name_token.kind {
+                TokenKind::Identifier(name) => name.clone(),
+                _ => unreachable!(),
+            };
+            self.advance()?;
+            name
+        } else {
+            // INHERITED without method name - will be handled by semantic analysis
+            "".to_string()
+        };
+
+        // Optional arguments
+        let args = if self.check(&TokenKind::LeftParen) {
+            // parse_args is in expressions module, call it directly
+            self.consume(TokenKind::LeftParen, "(")?;
+            let mut args = vec![];
+            if !self.check(&TokenKind::RightParen) {
+                loop {
+                    args.push(self.parse_expression()?);
+                    if !self.check(&TokenKind::Comma) {
+                        break;
+                    }
+                    self.advance()?;
+                }
+            }
+            self.consume(TokenKind::RightParen, ")")?;
+            args
+        } else {
+            vec![]
+        };
+
+        let span = if let Some(ref last_arg) = args.last() {
+            start_span.merge(last_arg.span())
+        } else {
+            start_span
+        };
+
+        Ok(Node::CallStmt(ast::CallStmt {
+            name,
+            args,
             span,
         }))
     }

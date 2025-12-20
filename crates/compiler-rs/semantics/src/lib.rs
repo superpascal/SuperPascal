@@ -780,6 +780,17 @@ impl SemanticAnalyzer {
                         // For now, return boolean (proper type checking would verify right is a set)
                         Type::boolean()
                     }
+                    ast::BinaryOp::Is => {
+                        // Type checking: left IS right (right must be a type)
+                        // Returns boolean
+                        Type::boolean()
+                    }
+                    ast::BinaryOp::As => {
+                        // Type casting: left AS right (right must be a type)
+                        // Returns the type being cast to (right side)
+                        // For now, return the right type (proper checking would verify compatibility)
+                        self.analyze_expression(&bin.right)
+                    }
                 }
             }
             Node::UnaryExpr(unary) => {
@@ -808,6 +819,11 @@ impl SemanticAnalyzer {
                             );
                             Type::Error
                         }
+                    }
+                    ast::UnaryOp::AddressOf => {
+                        // Address-of operator: @variable
+                        // Returns a pointer to the target type
+                        Type::pointer(expr_type)
                     }
                 }
             }
@@ -900,6 +916,18 @@ impl SemanticAnalyzer {
                     Type::Error
                 }
             }
+            Node::AddressOfExpr(addr) => {
+                // Address-of operator: @variable
+                // Returns a pointer to the target type
+                let target_type = self.analyze_expression(&addr.target);
+                Type::pointer(target_type)
+            }
+            Node::InheritedExpr(_inherited) => {
+                // INHERITED [method_name] [args]
+                // For now, return error type (proper handling would resolve parent method)
+                // This will be handled by semantic analysis of method calls
+                Type::Error // TODO: Proper type resolution for inherited calls
+            }
             _ => {
                 self.add_error(
                     "Invalid expression".to_string(),
@@ -956,6 +984,14 @@ impl SemanticAnalyzer {
                         // Set membership: IN operator evaluation not yet implemented for constant expressions
                         None
                     }
+                    ast::BinaryOp::Is => {
+                        // Type checking: IS operator evaluation not yet implemented for constant expressions
+                        None
+                    }
+                    ast::BinaryOp::As => {
+                        // Type casting: AS operator evaluation not yet implemented for constant expressions
+                        None
+                    }
                 }
             }
             Node::UnaryExpr(unary) => {
@@ -964,6 +1000,11 @@ impl SemanticAnalyzer {
                     ast::UnaryOp::Plus => Some(operand), // Unary plus is no-op
                     ast::UnaryOp::Minus => self.eval_unary_minus(&operand),
                     ast::UnaryOp::Not => self.eval_not(&operand),
+                    ast::UnaryOp::AddressOf => {
+                        // Address-of operator: @variable
+                        // Cannot be evaluated at compile time
+                        None
+                    }
                 }
             }
             _ => None, // Not a constant expression

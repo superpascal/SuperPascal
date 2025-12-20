@@ -430,6 +430,7 @@ pub struct DerefExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordType {
     pub fields: Vec<FieldDecl>,     // Field declarations
+    pub variant: Option<VariantPart>, // Optional variant part (CASE)
     pub span: Span,
 }
 
@@ -438,6 +439,24 @@ pub struct RecordType {
 pub struct FieldDecl {
     pub names: Vec<String>,         // Field names
     pub type_expr: Box<Node>,        // Type node
+    pub span: Span,
+}
+
+/// Variant part (CASE section) in record
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariantPart {
+    pub tag_field: Option<String>,   // Optional tag field name (e.g., "tag" in "case tag: TagType")
+    pub tag_type: Box<Node>,         // Tag type (discriminator type)
+    pub variants: Vec<Variant>,      // Variant cases
+    pub else_variant: Option<Vec<FieldDecl>>, // Optional ELSE variant fields
+    pub span: Span,
+}
+
+/// Variant case (one branch in CASE)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Variant {
+    pub values: Vec<Node>,           // Case values (expressions or ranges)
+    pub fields: Vec<FieldDecl>,      // Fields for this variant
     pub span: Span,
 }
 

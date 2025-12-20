@@ -71,14 +71,24 @@ impl super::Parser {
         } else if self.check(&TokenKind::KwRecord) {
             self.advance()?;
             let mut fields = vec![];
-            while !self.check(&TokenKind::KwEnd) {
+            let mut variant = None;
+            
+            // Parse fixed fields
+            while !self.check(&TokenKind::KwCase) && !self.check(&TokenKind::KwEnd) {
                 fields.push(self.parse_field_decl()?);
                 self.consume(TokenKind::Semicolon, ";")?;
             }
+            
+            // Parse variant part if present
+            if self.check(&TokenKind::KwCase) {
+                variant = Some(self.parse_variant_part()?);
+            }
+            
             let end_token = self.consume(TokenKind::KwEnd, "END")?;
             let span = start_span.merge(end_token.span);
             Ok(Node::RecordType(ast::RecordType {
                 fields,
+                variant,
                 span,
             }))
         } else if self.check(&TokenKind::KwClass) {
@@ -179,6 +189,132 @@ impl super::Parser {
         Ok(ast::FieldDecl {
             names,
             type_expr: Box::new(type_expr),
+            span,
+        })
+    }
+
+    /// Parse variant part: CASE [tag_field :] tag_type OF variant { ; variant } [ ELSE fields ]
+    fn parse_variant_part(&mut self) -> ParserResult<ast::VariantPart> {
+        let start_span = self
+            .current()
+            .map(|t| t.span)
+            .unwrap_or_else(|| Span::at(0, 1, 1));
+
+        self.consume(TokenKind::KwCase, "CASE")?;
+
+        // Optional tag field name: tag_field : tag_type
+        let tag_field = if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
+            let name_token = self.current().unwrap().clone();
+            let name = match &name_token.kind {
+                TokenKind::Identifier(name) => name.clone(),
+                _ => unreachable!(),
+            };
+            // Check if next token is colon (then it's a tag field) or OF (then it's the type)
+            if self.check_peek(&TokenKind::Colon) {
+                self.advance()?; // consume identifier
+                self.advance()?; // consume :
+                Some(name)
+            } else {
+                // No colon, so this identifier is the tag type name
+                None
+            }
+        } else {
+            None
+        };
+
+        // Parse tag type
+        let tag_type = self.parse_type()?;
+        self.consume(TokenKind::KwOf, "OF")?;
+
+        // Parse variants
+        let mut variants = vec![];
+        let mut else_variant = None;
+
+        while !self.check(&TokenKind::KwElse) && !self.check(&TokenKind::KwEnd) {
+            let variant_start = self
+                .current()
+                .map(|t| t.span)
+                .unwrap_or_else(|| Span::at(0, 1, 1));
+
+            // Parse case values (can be multiple, separated by commas)
+            let mut values = vec![];
+            loop {
+                // Parse a case value (can be expression or range)
+                let value = self.parse_expression()?;
+                values.push(value);
+
+                if !self.check(&TokenKind::Comma) {
+                    break;
+                }
+                self.advance()?; // consume comma
+            }
+
+            self.consume(TokenKind::Colon, ":")?;
+            self.consume(TokenKind::LeftParen, "(")?;
+
+            // Parse variant fields
+            let mut variant_fields = vec![];
+            while !self.check(&TokenKind::RightParen) {
+                variant_fields.push(self.parse_field_decl()?);
+                if self.check(&TokenKind::Semicolon) {
+                    self.advance()?;
+                }
+            }
+
+            self.consume(TokenKind::RightParen, ")")?;
+
+            let variant_span = if let Some(last_field) = variant_fields.last() {
+                variant_start.merge(last_field.span)
+            } else {
+                variant_start
+            };
+
+            variants.push(ast::Variant {
+                values,
+                fields: variant_fields,
+                span: variant_span,
+            });
+
+            // Optional semicolon between variants
+            if self.check(&TokenKind::Semicolon) {
+                self.advance()?;
+            }
+        }
+
+        // Optional ELSE variant
+        if self.check(&TokenKind::KwElse) {
+            self.advance()?; // consume ELSE
+            // Check if there's a colon (some Pascal dialects use "else:" but standard is just "else (")
+            if self.check(&TokenKind::Colon) {
+                self.advance()?; // consume optional colon
+            }
+            self.consume(TokenKind::LeftParen, "(")?;
+            let mut else_fields = vec![];
+            while !self.check(&TokenKind::RightParen) {
+                else_fields.push(self.parse_field_decl()?);
+                if self.check(&TokenKind::Semicolon) {
+                    self.advance()?;
+                }
+            }
+            self.consume(TokenKind::RightParen, ")")?;
+            // Optional semicolon after else variant (some Pascal dialects allow it)
+            if self.check(&TokenKind::Semicolon) {
+                self.advance()?;
+            }
+            else_variant = Some(else_fields);
+        }
+
+        let span = if let Some(ref last_variant) = variants.last() {
+            start_span.merge(last_variant.span)
+        } else {
+            start_span
+        };
+
+        Ok(ast::VariantPart {
+            tag_field,
+            tag_type: Box::new(tag_type),
+            variants,
+            else_variant,
             span,
         })
     }
@@ -561,6 +697,150 @@ mod tests {
                         }
                     } else {
                         panic!("Expected StringType");
+                    }
+                }
+            }
+        }
+    }
+
+    // ===== Variant Record Tests =====
+
+    #[test]
+    fn test_parse_variant_record_simple() {
+        let source = r#"
+            program Test;
+            type Shape = record
+                x, y: integer;
+                case kind: integer of
+                    1: (radius: integer);
+                    2: (width, height: integer);
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::RecordType(record_type) = type_decl.type_expr.as_ref() {
+                        assert_eq!(record_type.fields.len(), 1); // x, y
+                        assert!(record_type.variant.is_some());
+                        if let Some(ref variant) = record_type.variant {
+                            assert_eq!(variant.tag_field.as_ref().unwrap(), "kind");
+                            assert_eq!(variant.variants.len(), 2);
+                            assert_eq!(variant.variants[0].fields.len(), 1); // radius
+                            assert_eq!(variant.variants[1].fields.len(), 1); // width, height (one FieldDecl with 2 names)
+                        }
+                    } else {
+                        panic!("Expected RecordType");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_variant_record_without_tag_field() {
+        let source = r#"
+            program Test;
+            type Shape = record
+                x, y: integer;
+                case integer of
+                    1: (radius: integer);
+                    2: (width, height: integer);
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::RecordType(record_type) = type_decl.type_expr.as_ref() {
+                        assert!(record_type.variant.is_some());
+                        if let Some(ref variant) = record_type.variant {
+                            assert!(variant.tag_field.is_none());
+                            assert_eq!(variant.variants.len(), 2);
+                        }
+                    } else {
+                        panic!("Expected RecordType");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_variant_record_with_else() {
+        let source = r#"
+            program Test;
+            type Shape = record
+                x, y: integer;
+                case kind: integer of
+                    1: (radius: integer);
+                    2: (width, height: integer);
+                    else: (data: integer);
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::RecordType(record_type) = type_decl.type_expr.as_ref() {
+                        assert!(record_type.variant.is_some());
+                        if let Some(ref variant) = record_type.variant {
+                            assert!(variant.else_variant.is_some());
+                            if let Some(ref else_fields) = variant.else_variant {
+                                assert_eq!(else_fields.len(), 1);
+                            }
+                        }
+                    } else {
+                        panic!("Expected RecordType");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_variant_record_multiple_case_values() {
+        let source = r#"
+            program Test;
+            type Shape = record
+                case kind: integer of
+                    1, 2: (radius: integer);
+                    3, 4, 5: (width, height: integer);
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::RecordType(record_type) = type_decl.type_expr.as_ref() {
+                        assert!(record_type.variant.is_some());
+                        if let Some(ref variant) = record_type.variant {
+                            assert_eq!(variant.variants.len(), 2);
+                            assert_eq!(variant.variants[0].values.len(), 2); // 1, 2
+                            assert_eq!(variant.variants[1].values.len(), 3); // 3, 4, 5
+                        }
+                    } else {
+                        panic!("Expected RecordType");
                     }
                 }
             }

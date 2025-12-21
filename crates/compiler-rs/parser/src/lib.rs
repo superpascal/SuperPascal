@@ -196,6 +196,32 @@ impl Parser {
 
     /// Parse a complete program, unit, or library
     pub fn parse(&mut self) -> ParserResult<Node> {
+        // Handle directives before PROGRAM/UNIT/LIBRARY
+        // Directives may wrap the program declaration
+        while self.check(&TokenKind::Directive(String::new())) {
+            // Process directive but don't collect it here - let parse_program/parse_unit handle it
+            let _ = self.parse_directive()?;
+        }
+        
+        // Skip tokens if we're in an inactive conditional branch
+        while !self.directive_evaluator().is_active() {
+            if self.check(&TokenKind::Directive(String::new())) {
+                let _ = self.parse_directive()?;
+                continue;
+            } else if self.check(&TokenKind::Eof) {
+                let span = self
+                    .current()
+                    .map(|t| t.span)
+                    .unwrap_or_else(|| Span::at(0, 1, 1));
+                return Err(ParserError::InvalidSyntax {
+                    message: "Unmatched {$IFDEF} or {$IFNDEF} - reached end of file".to_string(),
+                    span,
+                });
+            } else {
+                self.advance()?;
+            }
+        }
+        
         // Check what we're parsing: PROGRAM, UNIT, or LIBRARY
         if self.check(&TokenKind::KwProgram) {
             self.parse_program()

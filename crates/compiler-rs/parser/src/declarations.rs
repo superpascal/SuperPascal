@@ -19,32 +19,50 @@ impl super::Parser {
             .unwrap_or_else(|| Span::at(0, 1, 1));
 
         // Collect directives before PROGRAM keyword
+        // Also handle conditional compilation - directives may wrap PROGRAM
         let mut directives = vec![];
-        while self.check(&TokenKind::Directive(String::new())) {
-            if let Some(directive) = self.parse_directive()? {
-                directives.push(directive);
-            }
-        }
-
-        // Skip tokens if we're in an inactive conditional branch
-        // This handles the case where directives before PROGRAM make us inactive
-        while !self.directive_evaluator().is_active() {
+        loop {
+            // Check for directives first
             if self.check(&TokenKind::Directive(String::new())) {
                 if let Some(directive) = self.parse_directive()? {
                     directives.push(directive);
                 }
-                // After processing directive, check if we're now active
+                // Continue to check for more directives or PROGRAM
                 continue;
-            } else if self.check(&TokenKind::Eof) {
-                // Reached EOF while in inactive branch - this is an error
-                return Err(ParserError::InvalidSyntax {
-                    message: "Unmatched {$IFDEF} or {$IFNDEF} - reached end of file".to_string(),
-                    span: self.current().map(|t| t.span).unwrap_or_else(|| Span::at(0, 1, 1)),
-                });
-            } else {
+            }
+            
+            // If we're in an inactive conditional branch, skip tokens
+            if !self.directive_evaluator().is_active() {
+                if self.check(&TokenKind::Eof) {
+                    // Reached EOF while in inactive branch - this is an error
+                    return Err(ParserError::InvalidSyntax {
+                        message: "Unmatched {$IFDEF} or {$IFNDEF} - reached end of file".to_string(),
+                        span: self.current().map(|t| t.span).unwrap_or_else(|| Span::at(0, 1, 1)),
+                    });
+                }
                 // Skip this token (including PROGRAM if it's in an inactive branch)
                 self.advance()?;
+                continue;
             }
+            
+            // We're active and not at a directive - check if we're at PROGRAM
+            if self.check(&TokenKind::KwProgram) {
+                break; // Found PROGRAM, exit loop
+            }
+            
+            // Not a directive, not PROGRAM, and we're active - this is unexpected
+            // This might be whitespace or comments, but PROGRAM should be next
+            // Let's check if we should break or continue
+            if self.check(&TokenKind::Eof) {
+                return Err(ParserError::InvalidSyntax {
+                    message: "Expected PROGRAM, UNIT, or LIBRARY".to_string(),
+                    span: self.current().map(|t| t.span).unwrap_or_else(|| Span::at(0, 1, 1)),
+                });
+            }
+            
+            // Skip non-directive, non-PROGRAM tokens (whitespace/comments should be handled by lexer)
+            // But if we get here, something unexpected happened
+            self.advance()?;
         }
 
         // PROGRAM keyword
@@ -69,12 +87,19 @@ impl super::Parser {
         // Period
         self.consume(TokenKind::Dot, ".")?;
 
-        // Check for EOF (allow whitespace/comments after period)
-        // Skip any remaining tokens that are just whitespace/comments
+        // Check for EOF or directives (allow directives like {$ENDIF} after program)
+        // Skip any remaining tokens that are directives or whitespace/comments
         while let Some(token) = self.current() {
             // If we see EOF, we're done
             if matches!(token.kind, TokenKind::Eof) {
                 break;
+            }
+            // If we see a directive, process it (e.g., {$ENDIF} closing conditional block)
+            if matches!(token.kind, TokenKind::Directive(_)) {
+                if let Some(directive) = self.parse_directive()? {
+                    directives.push(directive);
+                }
+                continue;
             }
             // Otherwise, there's unexpected content
             return Err(ParserError::InvalidSyntax {
@@ -93,7 +118,7 @@ impl super::Parser {
     }
 
     /// Parse a compiler directive and evaluate it
-    fn parse_directive(&mut self) -> ParserResult<Option<Node>> {
+    pub(crate) fn parse_directive(&mut self) -> ParserResult<Option<Node>> {
         let token = self.consume(TokenKind::Directive(String::new()), "directive")?;
         let content = match &token.kind {
             TokenKind::Directive(content) => content.clone(),
@@ -2613,7 +2638,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix directive evaluation flow
     fn test_parse_with_ifdef_active() {
         let source = r#"
             {$DEFINE DEBUG}
@@ -2637,7 +2661,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix directive evaluation flow
     fn test_parse_with_ifdef_inactive() {
         let source = r#"
             {$IFDEF DEBUG}
@@ -2655,7 +2678,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix directive evaluation flow
     fn test_parse_with_ifndef_active() {
         let source = r#"
             {$IFNDEF RELEASE}
@@ -2678,7 +2700,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix directive evaluation flow
     fn test_parse_with_else_branch() {
         let source = r#"
             {$IFDEF DEBUG}
@@ -2702,7 +2723,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix directive evaluation flow
     fn test_parse_with_define() {
         let source = r#"
             {$DEFINE DEBUG}
@@ -2723,7 +2743,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix directive evaluation flow
     fn test_parse_with_predefined_symbols() {
         let source = r#"
             {$IFDEF DEBUG}

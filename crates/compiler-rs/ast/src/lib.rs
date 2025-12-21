@@ -21,14 +21,17 @@ pub enum Node {
     VarDecl(VarDecl),
     ConstDecl(ConstDecl),
     TypeDecl(TypeDecl),
+    LabelDecl(LabelDecl),
     ProcDecl(ProcDecl),
     FuncDecl(FuncDecl),
+    OperatorDecl(OperatorDecl),
     PropertyDecl(PropertyDecl),
 
     // ===== Statements =====
     IfStmt(IfStmt),
     WhileStmt(WhileStmt),
     ForStmt(ForStmt),
+    ForInStmt(ForInStmt),
     RepeatStmt(RepeatStmt),
     CaseStmt(CaseStmt),
     AssignStmt(AssignStmt),
@@ -36,6 +39,9 @@ pub enum Node {
     TryStmt(TryStmt),
     RaiseStmt(RaiseStmt),
     WithStmt(WithStmt),
+    GotoStmt(GotoStmt),
+    LabeledStmt(LabeledStmt),
+    AsmStmt(AsmStmt),
 
     // ===== Expressions =====
     BinaryExpr(BinaryExpr),
@@ -48,6 +54,7 @@ pub enum Node {
     DerefExpr(DerefExpr),
     InheritedExpr(InheritedExpr),
     AddressOfExpr(AddressOfExpr),
+    EnumLiteralExpr(EnumLiteralExpr),  // Enum value reference (e.g., Color.Red)
 
     // ===== Types =====
     RecordType(RecordType),
@@ -57,8 +64,10 @@ pub enum Node {
     ClassType(ClassType),
     SetType(SetType),
     StringType(StringType),
+    FileType(FileType),
     ProceduralType(ProceduralType),
     InterfaceType(InterfaceType),
+    EnumType(EnumType),
     
     // ===== Set Literals =====
     SetLiteral(SetLiteral),
@@ -75,11 +84,14 @@ pub struct Program {
 /// Block node - contains declarations and statements
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
+    pub label_decls: Vec<Node>,  // LabelDecl nodes
     pub const_decls: Vec<Node>,  // ConstDecl nodes
     pub type_decls: Vec<Node>,   // TypeDecl nodes
     pub var_decls: Vec<Node>,    // VarDecl nodes
+    pub threadvar_decls: Vec<Node>, // ThreadVarDecl nodes (thread-local variables)
     pub proc_decls: Vec<Node>,   // ProcDecl nodes
     pub func_decls: Vec<Node>,    // FuncDecl nodes
+    pub operator_decls: Vec<Node>,  // OperatorDecl nodes
     pub statements: Vec<Node>,    // Statement nodes
     pub span: Span,
 }
@@ -119,6 +131,7 @@ pub struct InterfaceSection {
     pub var_decls: Vec<Node>,            // VarDecl nodes
     pub proc_decls: Vec<Node>,           // ProcDecl nodes (forward declarations)
     pub func_decls: Vec<Node>,           // FuncDecl nodes (forward declarations)
+    pub operator_decls: Vec<Node>,       // OperatorDecl nodes (forward declarations)
     pub property_decls: Vec<Node>,       // PropertyDecl nodes
     pub span: Span,
 }
@@ -132,6 +145,7 @@ pub struct ImplementationSection {
     pub var_decls: Vec<Node>,            // VarDecl nodes
     pub proc_decls: Vec<Node>,           // ProcDecl nodes
     pub func_decls: Vec<Node>,           // FuncDecl nodes
+    pub operator_decls: Vec<Node>,        // OperatorDecl nodes
     pub property_decls: Vec<Node>,       // PropertyDecl nodes
     pub span: Span,
 }
@@ -141,6 +155,7 @@ pub struct ImplementationSection {
 pub struct VarDecl {
     pub names: Vec<String>,      // Variable names
     pub type_expr: Box<Node>,     // Type node
+    pub absolute_address: Option<Box<Node>>, // Optional absolute address (ABSOLUTE expression)
     pub span: Span,
 }
 
@@ -149,6 +164,7 @@ pub struct VarDecl {
 pub struct ConstDecl {
     pub name: String,
     pub value: Box<Node>,         // Expression node
+    pub is_resourcestring: bool,  // true if declared with RESOURCESTRING
     pub span: Span,
 }
 
@@ -170,6 +186,7 @@ pub struct ProcDecl {
     pub is_forward: bool,          // true if FORWARD keyword is present
     pub is_external: bool,         // true if EXTERNAL keyword is present
     pub external_name: Option<String>, // Optional external name for EXTERNAL declarations
+    pub is_class_method: bool,     // true if CLASS keyword is present (class procedure)
     pub span: Span,
 }
 
@@ -184,6 +201,7 @@ pub struct FuncDecl {
     pub is_forward: bool,          // true if FORWARD keyword is present
     pub is_external: bool,         // true if EXTERNAL keyword is present
     pub external_name: Option<String>, // Optional external name for EXTERNAL declarations
+    pub is_class_method: bool,     // true if CLASS keyword is present (class function)
     pub span: Span,
 }
 
@@ -202,21 +220,40 @@ pub struct PropertyDecl {
     pub span: Span,
 }
 
+/// Operator declaration (operator overloading)
+/// Syntax: operator [ClassName.]operator_name(params): return_type;
+/// The operator_name can be a symbol (+, -, *, etc.) or an identifier (sub, add, etc.)
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperatorDecl {
+    pub operator_name: String,      // Operator name (e.g., "+", "sub", "-")
+    pub class_name: Option<String>, // Optional class name for class operators (ClassName.+)
+    pub params: Vec<Param>,        // Parameters
+    pub return_type: Box<Node>,    // Return type (operators always return a type)
+    pub block: Box<Node>,           // Block node
+    pub is_forward: bool,          // true if FORWARD keyword is present
+    pub is_external: bool,         // true if EXTERNAL keyword is present
+    pub external_name: Option<String>, // Optional external name for EXTERNAL declarations
+    pub span: Span,
+}
+
 /// Function/procedure parameter
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub names: Vec<String>,        // Parameter names
     pub param_type: ParamType,     // Parameter passing mode
     pub type_expr: Box<Node>,      // Type node
+    pub default_value: Option<Box<Node>>, // Optional default value
     pub span: Span,
 }
 
 /// Parameter passing mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamType {
-    Value,   // Pass by value (default)
-    Var,     // Pass by reference (var)
-    Const,   // Pass by constant reference (const)
+    Value,     // Pass by value (default)
+    Var,       // Pass by reference (var)
+    Const,     // Pass by constant reference (const)
+    ConstRef,  // Pass by constant reference (constref) - FPC extension
+    Out,       // Pass by reference, output only (out) - FPC/Delphi extension
 }
 
 /// If statement
@@ -244,6 +281,15 @@ pub struct ForStmt {
     pub direction: ForDirection,    // To or Downto
     pub end_expr: Box<Node>,         // Expression node (final value)
     pub body: Box<Node>,             // Statement or Block node
+    pub span: Span,
+}
+
+/// For..in statement: FOR identifier IN expression DO statement
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForInStmt {
+    pub var_name: String,            // Loop variable name
+    pub collection_expr: Box<Node>,   // Collection expression (array, set, etc.)
+    pub body: Box<Node>,             // Loop body (statement)
     pub span: Span,
 }
 
@@ -327,6 +373,35 @@ pub struct RaiseStmt {
 pub struct WithStmt {
     pub records: Vec<Node>,  // Record expressions (can be multiple)
     pub statement: Box<Node>, // Statement to execute
+    pub span: Span,
+}
+
+/// Label declaration: LABEL label1, label2, ...;
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelDecl {
+    pub labels: Vec<String>,  // Label names (can be identifiers or integer literals as strings)
+    pub span: Span,
+}
+
+/// Goto statement: GOTO label
+#[derive(Debug, Clone, PartialEq)]
+pub struct GotoStmt {
+    pub label: String,  // Label name to jump to
+    pub span: Span,
+}
+
+/// Inline assembly statement: ASM [body] END
+#[derive(Debug, Clone, PartialEq)]
+pub struct AsmStmt {
+    pub body: String,  // Assembly code body (raw text between ASM and END)
+    pub span: Span,
+}
+
+/// Labeled statement: label: statement
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabeledStmt {
+    pub label: String,  // Label name
+    pub statement: Box<Node>, // Statement following the label
     pub span: Span,
 }
 
@@ -528,6 +603,13 @@ pub struct StringType {
     pub span: Span,
 }
 
+/// File type (FILE or FILE OF type)
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileType {
+    pub element_type: Option<Box<Node>>,  // Optional element type (for FILE OF type)
+    pub span: Span,
+}
+
 /// Procedural type (procedure or function type)
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProceduralType {
@@ -546,6 +628,21 @@ pub struct InterfaceType {
     pub base_interfaces: Vec<String>, // List of base interfaces
     pub methods: Vec<Node>,         // Method declarations (ProcDecl, FuncDecl)
     pub properties: Vec<Node>,       // Property declarations
+    pub span: Span,
+}
+
+/// Enum type (enumerated type: (Red, Green, Blue))
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumType {
+    pub values: Vec<String>,        // Enum value names (e.g., ["Red", "Green", "Blue"])
+    pub span: Span,
+}
+
+/// Enum literal expression (enum value reference: Color.Red or just Red)
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumLiteralExpr {
+    pub enum_type: Option<String>,   // Optional enum type name (for qualified: Color.Red)
+    pub value: String,               // Enum value name (e.g., "Red")
     pub span: Span,
 }
 
@@ -617,12 +714,15 @@ impl Node {
             Node::VarDecl(v) => v.span,
             Node::ConstDecl(c) => c.span,
             Node::TypeDecl(t) => t.span,
+            Node::LabelDecl(l) => l.span,
             Node::ProcDecl(p) => p.span,
             Node::FuncDecl(f) => f.span,
+            Node::OperatorDecl(o) => o.span,
             Node::PropertyDecl(p) => p.span,
             Node::IfStmt(i) => i.span,
             Node::WhileStmt(w) => w.span,
             Node::ForStmt(f) => f.span,
+            Node::ForInStmt(f) => f.span,
             Node::RepeatStmt(r) => r.span,
             Node::CaseStmt(c) => c.span,
             Node::AssignStmt(a) => a.span,
@@ -630,6 +730,9 @@ impl Node {
             Node::TryStmt(t) => t.span,
             Node::RaiseStmt(r) => r.span,
             Node::WithStmt(w) => w.span,
+            Node::GotoStmt(g) => g.span,
+            Node::LabeledStmt(l) => l.span,
+            Node::AsmStmt(a) => a.span,
             Node::BinaryExpr(b) => b.span,
             Node::UnaryExpr(u) => u.span,
             Node::LiteralExpr(l) => l.span,
@@ -647,8 +750,11 @@ impl Node {
             Node::ClassType(c) => c.span,
             Node::SetType(s) => s.span,
             Node::StringType(s) => s.span,
+            Node::FileType(f) => f.span,
             Node::ProceduralType(p) => p.span,
             Node::InterfaceType(i) => i.span,
+            Node::EnumType(e) => e.span,
+            Node::EnumLiteralExpr(e) => e.span,
             Node::SetLiteral(s) => s.span,
         }
     }
@@ -664,11 +770,14 @@ mod tests {
     fn test_program_node() {
         let span = Span::new(0, 10, 1, 1);
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span,
         });
@@ -684,11 +793,14 @@ mod tests {
     fn test_block_node() {
         let span = Span::new(0, 20, 1, 1);
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span,
         });
@@ -704,14 +816,18 @@ mod tests {
                 name: "integer".to_string(),
                 span,
             })),
+            absolute_address: None,
             span,
         });
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![var_decl],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span,
         });
@@ -729,6 +845,7 @@ mod tests {
                 name: "integer".to_string(),
                 span,
             })),
+            absolute_address: None,
             span,
         });
         assert_eq!(var_decl.span(), span);
@@ -743,6 +860,7 @@ mod tests {
                 name: "integer".to_string(),
                 span,
             })),
+            absolute_address: None,
             span,
         });
         assert_eq!(var_decl.span(), span);
@@ -757,6 +875,7 @@ mod tests {
                 value: LiteralValue::Integer(100),
                 span,
             })),
+            is_resourcestring: false,
             span,
         });
         assert_eq!(const_decl.span(), span);
@@ -780,11 +899,14 @@ mod tests {
     fn test_proc_decl() {
         let span = Span::new(0, 30, 1, 1);
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span,
         });
@@ -796,6 +918,7 @@ mod tests {
             is_forward: false,
             is_external: false,
             external_name: None,
+            is_class_method: false,
             span,
         });
         assert_eq!(proc_decl.span(), span);
@@ -805,11 +928,14 @@ mod tests {
     fn test_proc_decl_with_params() {
         let span = Span::new(0, 40, 1, 1);
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span,
         });
@@ -820,6 +946,7 @@ mod tests {
                 name: "integer".to_string(),
                 span,
             })),
+            default_value: None,
             span,
         };
         let proc_decl = Node::ProcDecl(ProcDecl {
@@ -830,6 +957,7 @@ mod tests {
             is_forward: false,
             is_external: false,
             external_name: None,
+            is_class_method: false,
             span,
         });
         assert_eq!(proc_decl.span(), span);
@@ -839,11 +967,14 @@ mod tests {
     fn test_func_decl() {
         let span = Span::new(0, 35, 1, 1);
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span,
         });
@@ -859,6 +990,7 @@ mod tests {
             is_forward: false,
             is_external: false,
             external_name: None,
+            is_class_method: false,
             span,
         });
         assert_eq!(func_decl.span(), span);
@@ -1475,6 +1607,7 @@ mod tests {
                 name: "integer".to_string(),
                 span,
             })),
+            absolute_address: None,
             span,
         });
 
@@ -1518,11 +1651,14 @@ mod tests {
         });
 
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![var_decl],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![assign_stmt, if_stmt],
             span,
         });
@@ -1548,6 +1684,7 @@ mod tests {
                 name: "integer".to_string(),
                 span,
             })),
+            default_value: None,
             span,
         };
 
@@ -1573,11 +1710,14 @@ mod tests {
         });
 
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![return_stmt],
             span,
         });
@@ -1594,6 +1734,7 @@ mod tests {
             is_forward: false,
             is_external: false,
             external_name: None,
+            is_class_method: false,
             span,
         });
 

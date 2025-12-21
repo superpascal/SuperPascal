@@ -62,12 +62,16 @@ pub enum TokenKind {
     // ===== Keywords (Tier 1: Core) =====
     KwAnd,
     KwArray,
+    KwAsm,   // ASM keyword for inline assembly
     KwBegin,
     KwBoolean,
     KwByte,
     KwCase,
     KwChar,
     KwConst,
+    KwConstref,  // CONSTREF parameter mode
+    KwOut,       // OUT parameter mode
+    KwAbsolute,  // ABSOLUTE keyword for absolute addressing
     KwDiv,
     KwDo,
     KwDownto,
@@ -77,6 +81,7 @@ pub enum TokenKind {
     KwFor,
     KwFunction,
     KwGoto,
+    KwLabel,  // LABEL keyword for label declarations
     KwIf,
     KwIn,      // in (set membership operator)
     KwInteger,
@@ -100,6 +105,8 @@ pub enum TokenKind {
     KwType,
     KwUntil,
     KwVar,
+    KwThreadvar,  // THREADVAR keyword for thread-local variables
+    KwResourcestring,  // RESOURCESTRING keyword for resource strings
     KwWhile,
     KwWith,
     KwWord,
@@ -129,6 +136,7 @@ pub enum TokenKind {
     KwVirtual,
     KwForward,
     KwExternal,
+    KwOperator,  // OPERATOR keyword for operator overloading
     KwProperty,
     KwRead,
     KwWrite,
@@ -142,6 +150,7 @@ pub enum TokenKind {
     KwRaise,
     KwTry,
     KwOn,      // ON exception_type DO (exception handler)
+    KwFile,    // FILE keyword for file types
 
     // ===== Keywords (Special) =====
     KwNil,
@@ -234,6 +243,9 @@ impl Token {
                 | TokenKind::KwCase
                 | TokenKind::KwChar
                 | TokenKind::KwConst
+                | TokenKind::KwConstref
+                | TokenKind::KwOut
+                | TokenKind::KwAbsolute
                 | TokenKind::KwDiv
                 | TokenKind::KwDo
                 | TokenKind::KwDownto
@@ -243,6 +255,7 @@ impl Token {
                 | TokenKind::KwFor
                 | TokenKind::KwFunction
                 | TokenKind::KwGoto
+                | TokenKind::KwLabel
                 | TokenKind::KwIf
                 | TokenKind::KwIn
                 | TokenKind::KwInteger
@@ -266,6 +279,8 @@ impl Token {
                 | TokenKind::KwType
                 | TokenKind::KwUntil
                 | TokenKind::KwVar
+                | TokenKind::KwThreadvar
+                | TokenKind::KwResourcestring
                 | TokenKind::KwWhile
                 | TokenKind::KwWith
                 | TokenKind::KwWord
@@ -287,6 +302,9 @@ impl Token {
                 | TokenKind::KwProtected
                 | TokenKind::KwPublic
                 | TokenKind::KwVirtual
+                | TokenKind::KwForward
+                | TokenKind::KwExternal
+                | TokenKind::KwOperator
                 | TokenKind::KwProperty
                 | TokenKind::KwRead
                 | TokenKind::KwWrite
@@ -298,6 +316,7 @@ impl Token {
                 | TokenKind::KwRaise
                 | TokenKind::KwTry
                 | TokenKind::KwOn
+                | TokenKind::KwFile
                 | TokenKind::KwNil
                 | TokenKind::KwSelf
                 | TokenKind::KwInherited
@@ -479,12 +498,16 @@ pub fn lookup_keyword(s: &str) -> Option<TokenKind> {
     // Tier 1: Core keywords
     if eq_ignore_ascii_case(s, "and") { return Some(TokenKind::KwAnd); }
     if eq_ignore_ascii_case(s, "array") { return Some(TokenKind::KwArray); }
+    if eq_ignore_ascii_case(s, "asm") { return Some(TokenKind::KwAsm); }
     if eq_ignore_ascii_case(s, "begin") { return Some(TokenKind::KwBegin); }
     if eq_ignore_ascii_case(s, "boolean") { return Some(TokenKind::KwBoolean); }
     if eq_ignore_ascii_case(s, "byte") { return Some(TokenKind::KwByte); }
     if eq_ignore_ascii_case(s, "case") { return Some(TokenKind::KwCase); }
     if eq_ignore_ascii_case(s, "char") { return Some(TokenKind::KwChar); }
     if eq_ignore_ascii_case(s, "const") { return Some(TokenKind::KwConst); }
+    if eq_ignore_ascii_case(s, "constref") { return Some(TokenKind::KwConstref); }
+    if eq_ignore_ascii_case(s, "out") { return Some(TokenKind::KwOut); }
+    if eq_ignore_ascii_case(s, "absolute") { return Some(TokenKind::KwAbsolute); }
     if eq_ignore_ascii_case(s, "div") { return Some(TokenKind::KwDiv); }
     if eq_ignore_ascii_case(s, "do") { return Some(TokenKind::KwDo); }
     if eq_ignore_ascii_case(s, "downto") { return Some(TokenKind::KwDownto); }
@@ -494,6 +517,7 @@ pub fn lookup_keyword(s: &str) -> Option<TokenKind> {
     if eq_ignore_ascii_case(s, "for") { return Some(TokenKind::KwFor); }
     if eq_ignore_ascii_case(s, "function") { return Some(TokenKind::KwFunction); }
     if eq_ignore_ascii_case(s, "goto") { return Some(TokenKind::KwGoto); }
+    if eq_ignore_ascii_case(s, "label") { return Some(TokenKind::KwLabel); }
     if eq_ignore_ascii_case(s, "if") { return Some(TokenKind::KwIf); }
     if eq_ignore_ascii_case(s, "in") { return Some(TokenKind::KwIn); }
     if eq_ignore_ascii_case(s, "inherited") { return Some(TokenKind::KwInherited); }
@@ -518,6 +542,8 @@ pub fn lookup_keyword(s: &str) -> Option<TokenKind> {
     if eq_ignore_ascii_case(s, "type") { return Some(TokenKind::KwType); }
     if eq_ignore_ascii_case(s, "until") { return Some(TokenKind::KwUntil); }
     if eq_ignore_ascii_case(s, "var") { return Some(TokenKind::KwVar); }
+    if eq_ignore_ascii_case(s, "threadvar") { return Some(TokenKind::KwThreadvar); }
+    if eq_ignore_ascii_case(s, "resourcestring") { return Some(TokenKind::KwResourcestring); }
     if eq_ignore_ascii_case(s, "while") { return Some(TokenKind::KwWhile); }
     if eq_ignore_ascii_case(s, "with") { return Some(TokenKind::KwWith); }
     if eq_ignore_ascii_case(s, "word") { return Some(TokenKind::KwWord); }
@@ -544,6 +570,7 @@ pub fn lookup_keyword(s: &str) -> Option<TokenKind> {
     if eq_ignore_ascii_case(s, "virtual") { return Some(TokenKind::KwVirtual); }
     if eq_ignore_ascii_case(s, "forward") { return Some(TokenKind::KwForward); }
     if eq_ignore_ascii_case(s, "external") { return Some(TokenKind::KwExternal); }
+    if eq_ignore_ascii_case(s, "operator") { return Some(TokenKind::KwOperator); }
     if eq_ignore_ascii_case(s, "property") { return Some(TokenKind::KwProperty); }
     if eq_ignore_ascii_case(s, "read") { return Some(TokenKind::KwRead); }
     if eq_ignore_ascii_case(s, "write") { return Some(TokenKind::KwWrite); }
@@ -556,6 +583,7 @@ pub fn lookup_keyword(s: &str) -> Option<TokenKind> {
     if eq_ignore_ascii_case(s, "raise") { return Some(TokenKind::KwRaise); }
     if eq_ignore_ascii_case(s, "try") { return Some(TokenKind::KwTry); }
     if eq_ignore_ascii_case(s, "on") { return Some(TokenKind::KwOn); }
+    if eq_ignore_ascii_case(s, "file") { return Some(TokenKind::KwFile); }
     // Special
     if eq_ignore_ascii_case(s, "nil") { return Some(TokenKind::KwNil); }
     if eq_ignore_ascii_case(s, "self") { return Some(TokenKind::KwSelf); }

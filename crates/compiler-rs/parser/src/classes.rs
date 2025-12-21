@@ -170,6 +170,7 @@ impl super::Parser {
                         let var_decl = Node::VarDecl(ast::VarDecl {
                             names: field_decl.names,
                             type_expr: field_decl.type_expr,
+                            absolute_address: None,
                             span: field_decl.span,
                         });
                         members.push((current_visibility, ast::ClassMember::Field(var_decl)));
@@ -191,12 +192,13 @@ impl super::Parser {
                 let destructor = self.parse_destructor_decl()?;
                 members.push((current_visibility, ast::ClassMember::Destructor(destructor)));
             } else if self.check(&TokenKind::KwProcedure) {
-                // Method (can be class procedure)
-                let proc = self.parse_procedure_forward_decl()?;
+                // Method (can be class procedure) - in class context, these are forward declarations
+                // We need to parse them specially to avoid treating following procedures/functions as nested
+                let proc = self.parse_procedure_decl_in_class()?;
                 members.push((current_visibility, ast::ClassMember::Method(proc)));
             } else if self.check(&TokenKind::KwFunction) {
-                // Method (can be class function)
-                let func = self.parse_function_forward_decl()?;
+                // Method (can be class function) - in class context, these are forward declarations
+                let func = self.parse_function_decl_in_class()?;
                 members.push((current_visibility, ast::ClassMember::Method(func)));
             } else if self.check(&TokenKind::KwProperty) {
                 // Property
@@ -249,11 +251,14 @@ impl super::Parser {
 
         // Create an empty block for forward declarations
         let empty_block = Node::Block(ast::Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span: start_span,
         });
@@ -267,6 +272,7 @@ impl super::Parser {
             is_forward: false,
             is_external: false,
             external_name: None,
+            is_class_method: false, // Constructors are not class methods
             span,
         }))
     }
@@ -299,11 +305,14 @@ impl super::Parser {
 
         // Create an empty block for forward declarations
         let empty_block = Node::Block(ast::Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span: start_span,
         });
@@ -317,6 +326,7 @@ impl super::Parser {
             is_forward: false,
             is_external: false,
             external_name: None,
+            is_class_method: false, // Destructors are not class methods
             span,
         }))
     }

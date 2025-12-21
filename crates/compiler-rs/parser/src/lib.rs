@@ -11,9 +11,11 @@ mod declarations;
 mod classes;
 mod units;
 mod properties;
+pub mod query;
+pub mod incremental;
 
 use ast::Node;
-use errors::{Diagnostic, ParserError, ParserResult};
+use errors::{CodeSnippet, Diagnostic, ParserError, ParserResult};
 use lexer::Lexer;
 use tokens::{Span, Token, TokenKind};
 
@@ -52,7 +54,7 @@ impl Parser {
         
         // Add enhanced context based on error type
         match error {
-            ParserError::UnexpectedToken { expected, found, .. } => {
+            ParserError::UnexpectedToken { expected, found, span } => {
                 // Add suggestion for common mistakes
                 if expected == "identifier" && found.contains("keyword") {
                     diag = diag.with_suggestion(
@@ -62,24 +64,108 @@ impl Parser {
                     diag = diag.with_suggestion(
                         format!("Missing semicolon before 'end'. Add ';' after the previous statement.")
                     );
+                } else if expected == ":" && found.contains("=") {
+                    diag = diag.with_suggestion(
+                        format!("Did you mean ':' instead of '='? Variable declarations use ':' for type.")
+                    );
+                } else if expected == "=" && found.contains(":") {
+                    diag = diag.with_suggestion(
+                        format!("Did you mean '=' instead of ':'? Assignments use '=' (or ':=' in Pascal).")
+                    );
+                } else if expected == ":=" && found.contains("=") {
+                    diag = diag.with_suggestion(
+                        format!("Pascal uses ':=' for assignment, not '='. Change '=' to ':='.")
+                    );
+                } else if expected == "BEGIN" && found.contains("begin") {
+                    diag = diag.with_suggestion(
+                        format!("Pascal is case-sensitive for keywords. Use 'BEGIN' (uppercase) or ensure your lexer handles case correctly.")
+                    );
+                } else if expected == "END" && found.contains("end") {
+                    diag = diag.with_suggestion(
+                        format!("Pascal is case-sensitive for keywords. Use 'END' (uppercase) or ensure your lexer handles case correctly.")
+                    );
+                } else if expected == ")" && found.contains("]") {
+                    diag = diag.with_suggestion(
+                        format!("Mismatched bracket. Use ')' to close a function call or expression.")
+                    );
+                } else if expected == "]" && found.contains(")") {
+                    diag = diag.with_suggestion(
+                        format!("Mismatched bracket. Use ']' to close an array index.")
+                    );
+                } else if expected == "THEN" && found.contains("then") {
+                    diag = diag.with_suggestion(
+                        format!("Pascal is case-sensitive. Use 'THEN' (uppercase) after IF condition.")
+                    );
+                } else if expected == "DO" && found.contains("do") {
+                    diag = diag.with_suggestion(
+                        format!("Pascal is case-sensitive. Use 'DO' (uppercase) after FOR/WHILE condition.")
+                    );
+                }
+                
+                // Add code snippet if we have source available
+                if let Some(source) = self.get_source_snippet(*span) {
+                    diag = diag.with_code_snippet(source);
                 }
             }
-            ParserError::UnexpectedEof { expected, .. } => {
-                diag = diag.with_suggestion(
-                    format!("The file ended unexpectedly. Add '{}' before the end of file.", expected)
+            ParserError::UnexpectedEof { expected, span } => {
+                let suggestion = match expected.as_str() {
+                    "END" => "Add 'END' to close the block, procedure, or function.",
+                    ";" => "Add ';' to terminate the statement.",
+                    "." => "Add '.' to end the program.",
+                    ")" => "Add ')' to close the expression or parameter list.",
+                    "]" => "Add ']' to close the array index.",
+                    "}" => "Add '}' to close the comment.",
+                    "THEN" => "Add 'THEN' after the IF condition.",
+                    "DO" => "Add 'DO' after the FOR/WHILE condition.",
+                    _ => &format!("Add '{}' before the end of file.", expected),
+                };
+                diag = diag.with_suggestion(suggestion.to_string());
+                
+                // Add explanation
+                diag = diag.with_explanation(
+                    format!(
+                        "The file ended unexpectedly while the parser was expecting '{}'. \
+                         This usually means a block, statement, or expression was not properly closed.",
+                        expected
+                    )
                 );
             }
-            ParserError::InvalidSyntax { message, .. } => {
+            ParserError::InvalidSyntax { message, span } => {
                 // Try to provide helpful context
                 if message.contains("statement") {
                     diag = diag.with_suggestion(
                         "Check that all statements are properly terminated with semicolons.".to_string()
                     );
+                } else if message.contains("expression") {
+                    diag = diag.with_suggestion(
+                        "Check that the expression is complete and all parentheses are balanced.".to_string()
+                    );
+                } else if message.contains("type") {
+                    diag = diag.with_suggestion(
+                        "Check that the type name is correct and the type is declared.".to_string()
+                    );
+                } else if message.contains("Lexer error") {
+                    diag = diag.with_suggestion(
+                        "Check for invalid characters or syntax in the source code.".to_string()
+                    );
+                }
+                
+                // Add code snippet if available
+                if let Some(source) = self.get_source_snippet(*span) {
+                    diag = diag.with_code_snippet(source);
                 }
             }
         }
         
         diag
+    }
+    
+    /// Get a code snippet around the error location for display
+    fn get_source_snippet(&self, _span: Span) -> Option<CodeSnippet> {
+        // Try to get source from lexer if available
+        // For now, return None - this can be enhanced later with source storage
+        // TODO: Store source in Parser struct and extract lines around error
+        None
     }
 
     // Core functionality is in core.rs

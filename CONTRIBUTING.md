@@ -360,7 +360,13 @@ just test
 # Run specific crate tests
 just test-crate tokens
 
-# Run with coverage
+# Run with coverage (shows summary)
+just test-coverage-summary
+
+# Run with coverage and generate HTML report
+just test-coverage-html
+
+# Run with coverage and generate LCOV file
 just test-coverage
 ```
 

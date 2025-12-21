@@ -4,6 +4,8 @@
 //! function signatures for all target platforms. It serves as a specification
 //! for what the runtime must provide, not an implementation.
 
+pub mod capabilities;
+
 /// Represents a target platform
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TargetPlatform {

@@ -8,20 +8,54 @@ use errors::Diagnostic;
 use ir::{IRBuilder, Program};
 use object_zealz80::{ObjectFile, Section, Symbol, SymbolType, SymbolVisibility};
 use parser::Parser;
+use runtime_spec::{TargetPlatform, capabilities};
 use semantics::SemanticAnalyzer;
+use semantics::feature_checker;
 
 /// Compiler instance that orchestrates the compilation pipeline
 pub struct Compiler {
-    #[allow(dead_code)] // Reserved for future multi-target support
-    target: String, // For now, hardcoded to "zealz80"
+    target: TargetPlatform,
+    check_features: bool, // Whether to check feature compatibility
 }
 
 impl Compiler {
-    /// Create a new compiler instance
+    /// Create a new compiler instance with default target (ZealZ80)
     pub fn new() -> Self {
         Self {
-            target: "zealz80".to_string(),
+            target: TargetPlatform::ZealZ80,
+            check_features: true,
         }
+    }
+    
+    /// Create a new compiler instance for a specific target platform
+    pub fn new_with_target(target: TargetPlatform) -> Self {
+        Self {
+            target,
+            check_features: true,
+        }
+    }
+    
+    /// Create a compiler instance with feature checking disabled
+    pub fn new_without_feature_check(target: TargetPlatform) -> Self {
+        Self {
+            target,
+            check_features: false,
+        }
+    }
+    
+    /// Get the current target platform
+    pub fn target(&self) -> TargetPlatform {
+        self.target
+    }
+    
+    /// Set the target platform
+    pub fn set_target(&mut self, target: TargetPlatform) {
+        self.target = target;
+    }
+    
+    /// Enable or disable feature checking
+    pub fn set_feature_checking(&mut self, enabled: bool) {
+        self.check_features = enabled;
     }
 
     /// Compile a Pascal source file to an object file
@@ -193,10 +227,18 @@ impl Compiler {
         })?;
 
         // 3. Semantic Analysis
-        let mut analyzer = SemanticAnalyzer::new(filename);
-        let diagnostics = analyzer.analyze(&ast);
+        let mut analyzer = SemanticAnalyzer::new(filename.clone());
+        let mut diagnostics = analyzer.analyze(&ast);
+        
+        // 4. Feature Compatibility Checking
+        if self.check_features {
+            let capabilities = capabilities::get_capabilities(self.target);
+            let mut feature_checker = feature_checker::FeatureChecker::new(capabilities, filename);
+            feature_checker.check(&ast);
+            diagnostics.extend_from_slice(feature_checker.diagnostics());
+        }
 
-        // 4. IR Generation (simplified - for now, create empty program)
+        // 5. IR Generation (simplified - for now, create empty program)
         // TODO: Implement AST to IR conversion
         let ir_builder = IRBuilder::new();
         let program = ir_builder.into_program();

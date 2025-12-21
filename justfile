@@ -20,9 +20,20 @@ test-verbose:
 test-crate CRATE:
     @cd crates/compiler-rs && cargo nextest run -p {{CRATE}}
 
-# Run tests with coverage
+# Run tests with coverage (using cargo-llvm-cov)
 test-coverage:
-    @cd crates/compiler-rs && cargo nextest run --profile coverage
+    @cd crates/compiler-rs && cargo llvm-cov --all-features --workspace --lcov --output-path ../../coverage.lcov
+    @echo "Coverage report generated: coverage.lcov"
+    @echo "View with: cargo llvm-cov --open"
+
+# Run tests with coverage and show summary
+test-coverage-summary:
+    @cd crates/compiler-rs && cargo llvm-cov --all-features --workspace --summary-only
+
+# Run tests with coverage and open HTML report
+test-coverage-html:
+    @cd crates/compiler-rs && cargo llvm-cov --all-features --workspace --html --output-dir ../../coverage-html
+    @echo "HTML coverage report generated in: coverage-html/index.html"
 
 # Run only unit tests
 test-unit:

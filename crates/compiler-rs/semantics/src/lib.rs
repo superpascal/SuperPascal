@@ -7,40 +7,45 @@
 //! - Constant folding
 //! - Control flow analysis (future)
 
+mod core;
+mod declarations;
+mod statements;
+mod expressions;
+mod types;
+mod constants;
+mod lvalues;
+pub mod feature_checker;
+
 use ast::Node;
-use errors::{Diagnostic, ErrorSeverity};
+use errors::Diagnostic;
 use symbols::{ConstantValue, Parameter, ParameterMode, Symbol, SymbolKind, SymbolTable};
 use tokens::Span;
-use types::{Field, Type};
+use ::types::{Field, Type};
 
 /// Semantic analyzer
 pub struct SemanticAnalyzer {
-    symbol_table: SymbolTable,
-    diagnostics: Vec<Diagnostic>,
-    filename: Option<String>,
+    core: core::CoreAnalyzer,
 }
 
 impl SemanticAnalyzer {
     /// Create a new semantic analyzer
     pub fn new(filename: Option<String>) -> Self {
         Self {
-            symbol_table: SymbolTable::new(),
-            diagnostics: vec![],
-            filename,
+            core: core::CoreAnalyzer::new(filename),
         }
     }
 
     /// Analyze a program AST
     pub fn analyze(&mut self, program: &Node) -> Vec<Diagnostic> {
-        self.diagnostics.clear();
-        self.symbol_table = SymbolTable::new();
+        self.core.diagnostics.clear();
+        self.core.symbol_table = SymbolTable::new();
 
         if let Node::Program(prog) = program {
             // Analyze the program block
             self.analyze_block(&prog.block);
         }
 
-        self.diagnostics.clone()
+        self.core.diagnostics.clone()
     }
 
     /// Analyze a block (declarations and statements)
@@ -74,8 +79,8 @@ impl SemanticAnalyzer {
     fn analyze_const_decl(&mut self, decl: &Node) {
         if let Node::ConstDecl(c) = decl {
             // Check if constant already exists
-            if self.symbol_table.exists_in_current_scope(&c.name) {
-                self.add_error(
+            if self.core.symbol_table.exists_in_current_scope(&c.name) {
+                self.core.add_error(
                     format!("Constant '{}' already declared", c.name),
                     c.span,
                 );
@@ -96,11 +101,11 @@ impl SemanticAnalyzer {
                     value: const_value, // Store evaluated constant value
                     span: c.span,
                 },
-                scope_level: self.symbol_table.scope_level(),
+                scope_level: self.core.symbol_table.scope_level(),
             };
 
-            if let Err(e) = self.symbol_table.insert(symbol) {
-                self.add_error(e, c.span);
+            if let Err(e) = self.core.symbol_table.insert(symbol) {
+                self.core.add_error(e, c.span);
             }
         }
     }
@@ -109,8 +114,8 @@ impl SemanticAnalyzer {
     fn analyze_type_decl(&mut self, decl: &Node) {
         if let Node::TypeDecl(t) = decl {
             // Check if type already exists
-            if self.symbol_table.exists_in_current_scope(&t.name) {
-                self.add_error(
+            if self.core.symbol_table.exists_in_current_scope(&t.name) {
+                self.core.add_error(
                     format!("Type '{}' already declared", t.name),
                     t.span,
                 );
@@ -127,11 +132,11 @@ impl SemanticAnalyzer {
                     aliased_type: type_expr,
                     span: t.span,
                 },
-                scope_level: self.symbol_table.scope_level(),
+                scope_level: self.core.symbol_table.scope_level(),
             };
 
-            if let Err(e) = self.symbol_table.insert(symbol) {
-                self.add_error(e, t.span);
+            if let Err(e) = self.core.symbol_table.insert(symbol) {
+                self.core.add_error(e, t.span);
             }
         }
     }
@@ -145,8 +150,8 @@ impl SemanticAnalyzer {
             // Create symbols for each variable name
             for name in &v.names {
                 // Check if variable already exists
-                if self.symbol_table.exists_in_current_scope(name) {
-                    self.add_error(
+                if self.core.symbol_table.exists_in_current_scope(name) {
+                    self.core.add_error(
                         format!("Variable '{}' already declared", name),
                         v.span,
                     );
@@ -159,11 +164,11 @@ impl SemanticAnalyzer {
                         var_type: var_type.clone(),
                         span: v.span,
                     },
-                    scope_level: self.symbol_table.scope_level(),
+                    scope_level: self.core.symbol_table.scope_level(),
                 };
 
-                if let Err(e) = self.symbol_table.insert(symbol) {
-                    self.add_error(e, v.span);
+                if let Err(e) = self.core.symbol_table.insert(symbol) {
+                    self.core.add_error(e, v.span);
                 }
             }
         }
@@ -173,8 +178,8 @@ impl SemanticAnalyzer {
     fn analyze_proc_decl(&mut self, decl: &Node) {
         if let Node::ProcDecl(p) = decl {
             // Check if procedure already exists
-            if self.symbol_table.exists_in_current_scope(&p.name) {
-                self.add_error(
+            if self.core.symbol_table.exists_in_current_scope(&p.name) {
+                self.core.add_error(
                     format!("Procedure '{}' already declared", p.name),
                     p.span,
                 );
@@ -191,15 +196,15 @@ impl SemanticAnalyzer {
                     params: params.clone(),
                     span: p.span,
                 },
-                scope_level: self.symbol_table.scope_level(),
+                scope_level: self.core.symbol_table.scope_level(),
             };
 
-            if let Err(e) = self.symbol_table.insert(symbol) {
-                self.add_error(e, p.span);
+            if let Err(e) = self.core.symbol_table.insert(symbol) {
+                self.core.add_error(e, p.span);
             }
 
             // Analyze procedure body (enter new scope)
-            self.symbol_table.enter_scope();
+            self.core.symbol_table.enter_scope();
             // Add parameters to scope
             for param in &params {
                 for name in &param.name.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>() {
@@ -210,14 +215,14 @@ impl SemanticAnalyzer {
                                 var_type: param.param_type.clone(),
                                 span: param.span,
                             },
-                            scope_level: self.symbol_table.scope_level(),
+                            scope_level: self.core.symbol_table.scope_level(),
                         };
-                        let _ = self.symbol_table.insert(param_symbol);
+                        let _ = self.core.symbol_table.insert(param_symbol);
                     }
                 }
             }
             self.analyze_block(&p.block);
-            self.symbol_table.exit_scope();
+            self.core.symbol_table.exit_scope();
         }
     }
 
@@ -225,8 +230,8 @@ impl SemanticAnalyzer {
     fn analyze_func_decl(&mut self, decl: &Node) {
         if let Node::FuncDecl(f) = decl {
             // Check if function already exists
-            if self.symbol_table.exists_in_current_scope(&f.name) {
-                self.add_error(
+            if self.core.symbol_table.exists_in_current_scope(&f.name) {
+                self.core.add_error(
                     format!("Function '{}' already declared", f.name),
                     f.span,
                 );
@@ -249,15 +254,15 @@ impl SemanticAnalyzer {
                     return_type: return_type_clone,
                     span: f.span,
                 },
-                scope_level: self.symbol_table.scope_level(),
+                scope_level: self.core.symbol_table.scope_level(),
             };
 
-            if let Err(e) = self.symbol_table.insert(symbol) {
-                self.add_error(e, f.span);
+            if let Err(e) = self.core.symbol_table.insert(symbol) {
+                self.core.add_error(e, f.span);
             }
 
             // Analyze function body (enter new scope)
-            self.symbol_table.enter_scope();
+            self.core.symbol_table.enter_scope();
             // Add parameters to scope
             for param in &params_clone {
                 for name in &param.name.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>() {
@@ -268,14 +273,14 @@ impl SemanticAnalyzer {
                                 var_type: param.param_type.clone(),
                                 span: param.span,
                             },
-                            scope_level: self.symbol_table.scope_level(),
+                            scope_level: self.core.symbol_table.scope_level(),
                         };
-                        let _ = self.symbol_table.insert(param_symbol);
+                        let _ = self.core.symbol_table.insert(param_symbol);
                     }
                 }
             }
             self.analyze_block(&f.block);
-            self.symbol_table.exit_scope();
+            self.core.symbol_table.exit_scope();
         }
     }
 
@@ -289,6 +294,8 @@ impl SemanticAnalyzer {
                     ast::ParamType::Value => ParameterMode::Value,
                     ast::ParamType::Var => ParameterMode::Var,
                     ast::ParamType::Const => ParameterMode::Const,
+                    ast::ParamType::ConstRef => ParameterMode::Const, // ConstRef is similar to Const
+                    ast::ParamType::Out => ParameterMode::Var,        // Out is similar to Var (reference)
                 };
                 Parameter {
                     name: p.names.join(", "), // Join multiple names
@@ -305,11 +312,11 @@ impl SemanticAnalyzer {
         match type_expr {
             Node::NamedType(n) => {
                 // Look up named type in symbol table
-                if let Some(symbol) = self.symbol_table.lookup(&n.name) {
+                if let Some(symbol) = self.core.symbol_table.lookup(&n.name) {
                     if let SymbolKind::TypeAlias { aliased_type, .. } = &symbol.kind {
                         aliased_type.clone()
                     } else {
-                        self.add_error(
+                        self.core.add_error(
                             format!("'{}' is not a type", n.name),
                             n.span,
                         );
@@ -324,7 +331,7 @@ impl SemanticAnalyzer {
                         "boolean" => Type::boolean(),
                         "char" => Type::char(),
                         _ => {
-                            self.add_error(
+                            self.core.add_error(
                                 format!("Type '{}' not found", n.name),
                                 n.span,
                             );
@@ -356,7 +363,7 @@ impl SemanticAnalyzer {
                 record
             }
             _ => {
-                self.add_error("Invalid type expression".to_string(), type_expr.span());
+                            self.core.add_error("Invalid type expression".to_string(), type_expr.span());
                 Type::Error
             }
         }
@@ -373,7 +380,7 @@ impl SemanticAnalyzer {
             Node::RepeatStmt(r) => self.analyze_repeat_stmt(r),
             Node::CaseStmt(c) => self.analyze_case_stmt(c),
             _ => {
-                self.add_error(
+                            self.core.add_error(
                     "Unsupported statement type".to_string(),
                     stmt.span(),
                 );
@@ -391,11 +398,11 @@ impl SemanticAnalyzer {
 
         // Check assignment compatibility
         if !value_type.is_assignable_to(&target_type) {
-            self.add_error(
+                            self.core.add_error(
                 format!(
                     "Type mismatch: cannot assign {} to {}",
-                    format_type(&value_type),
-                    format_type(&target_type)
+                    core::CoreAnalyzer::format_type(&value_type),
+                    core::CoreAnalyzer::format_type(&target_type)
                 ),
                 assign.span,
             );
@@ -405,7 +412,7 @@ impl SemanticAnalyzer {
     /// Analyze call statement (procedure call)
     fn analyze_call_stmt(&mut self, call: &ast::CallStmt) {
         // Look up procedure
-        let params_opt = self.symbol_table.lookup(&call.name).and_then(|symbol| {
+        let params_opt = self.core.symbol_table.lookup(&call.name).and_then(|symbol| {
             if let SymbolKind::Procedure { params, .. } = &symbol.kind {
                 Some(params.clone())
             } else {
@@ -416,7 +423,7 @@ impl SemanticAnalyzer {
         if let Some(params) = params_opt {
             // Check argument count
             if call.args.len() != params.len() {
-                self.add_error(
+                            self.core.add_error(
                     format!(
                         "Procedure '{}' expects {} arguments, found {}",
                         call.name,
@@ -432,23 +439,23 @@ impl SemanticAnalyzer {
             for (arg, param) in call.args.iter().zip(params.iter()) {
                 let arg_type = self.analyze_expression(arg);
                 if !arg_type.is_assignable_to(&param.param_type) {
-                    self.add_error(
+                            self.core.add_error(
                         format!(
                             "Argument type mismatch: expected {}, found {}",
-                            format_type(&param.param_type),
-                            format_type(&arg_type)
+                            core::CoreAnalyzer::format_type(&param.param_type),
+                            core::CoreAnalyzer::format_type(&arg_type)
                         ),
                         arg.span(),
                     );
                 }
             }
-        } else if self.symbol_table.lookup(&call.name).is_some() {
-            self.add_error(
+        } else if self.core.symbol_table.lookup(&call.name).is_some() {
+                            self.core.add_error(
                 format!("'{}' is not a procedure", call.name),
                 call.span,
             );
         } else {
-            self.add_error(
+                            self.core.add_error(
                 format!("Procedure '{}' not found", call.name),
                 call.span,
             );
@@ -459,7 +466,7 @@ impl SemanticAnalyzer {
     fn analyze_if_stmt(&mut self, if_stmt: &ast::IfStmt) {
         let condition_type = self.analyze_expression(&if_stmt.condition);
         if !condition_type.equals(&Type::boolean()) {
-            self.add_error(
+                            self.core.add_error(
                 "If condition must be boolean".to_string(),
                 if_stmt.condition.span(),
             );
@@ -495,7 +502,7 @@ impl SemanticAnalyzer {
     fn analyze_while_stmt(&mut self, while_stmt: &ast::WhileStmt) {
         let condition_type = self.analyze_expression(&while_stmt.condition);
         if !condition_type.equals(&Type::boolean()) {
-            self.add_error(
+                            self.core.add_error(
                 "While condition must be boolean".to_string(),
                 while_stmt.condition.span(),
             );
@@ -522,7 +529,7 @@ impl SemanticAnalyzer {
     /// Analyze for statement
     fn analyze_for_stmt(&mut self, for_stmt: &ast::ForStmt) {
         // Check loop variable exists and is assignable
-        let var_type_opt = self.symbol_table.lookup(&for_stmt.var_name).and_then(|symbol| {
+        let var_type_opt = self.core.symbol_table.lookup(&for_stmt.var_name).and_then(|symbol| {
             if let SymbolKind::Variable { var_type, .. } = &symbol.kind {
                 Some(var_type.clone())
             } else {
@@ -535,33 +542,33 @@ impl SemanticAnalyzer {
             let end_type = self.analyze_expression(&for_stmt.end_expr);
 
             if !start_type.is_assignable_to(&var_type) {
-                self.add_error(
+                            self.core.add_error(
                     format!(
                         "For loop start value type {} not compatible with loop variable type {}",
-                        format_type(&start_type),
-                        format_type(&var_type)
+                        core::CoreAnalyzer::format_type(&start_type),
+                        core::CoreAnalyzer::format_type(&var_type)
                     ),
                     for_stmt.start_expr.span(),
                 );
             }
 
             if !end_type.is_assignable_to(&var_type) {
-                self.add_error(
+                            self.core.add_error(
                     format!(
                         "For loop end value type {} not compatible with loop variable type {}",
-                        format_type(&end_type),
-                        format_type(&var_type)
+                        core::CoreAnalyzer::format_type(&end_type),
+                        core::CoreAnalyzer::format_type(&var_type)
                     ),
                     for_stmt.end_expr.span(),
                 );
             }
-        } else if self.symbol_table.lookup(&for_stmt.var_name).is_some() {
-            self.add_error(
+        } else if self.core.symbol_table.lookup(&for_stmt.var_name).is_some() {
+                            self.core.add_error(
                 format!("'{}' is not a variable", for_stmt.var_name),
                 for_stmt.span,
             );
         } else {
-            self.add_error(
+                            self.core.add_error(
                 format!("Variable '{}' not found", for_stmt.var_name),
                 for_stmt.span,
             );
@@ -577,7 +584,7 @@ impl SemanticAnalyzer {
         }
         let condition_type = self.analyze_expression(&repeat_stmt.condition);
         if !condition_type.equals(&Type::boolean()) {
-            self.add_error(
+                            self.core.add_error(
                 "Repeat condition must be boolean".to_string(),
                 repeat_stmt.condition.span(),
             );
@@ -592,7 +599,7 @@ impl SemanticAnalyzer {
             expr_type,
             Type::Primitive(_) | Type::Named { .. }
         ) {
-            self.add_error(
+                            self.core.add_error(
                 "Case expression must be an ordinal type".to_string(),
                 case_stmt.expr.span(),
             );
@@ -602,11 +609,11 @@ impl SemanticAnalyzer {
             for value in &case_branch.values {
                 let value_type = self.analyze_expression(value);
                 if !value_type.equals(&expr_type) {
-                    self.add_error(
+                            self.core.add_error(
                         format!(
                             "Case value type {} does not match expression type {}",
-                            format_type(&value_type),
-                            format_type(&expr_type)
+                            core::CoreAnalyzer::format_type(&value_type),
+                            core::CoreAnalyzer::format_type(&expr_type)
                         ),
                         value.span(),
                     );
@@ -624,18 +631,18 @@ impl SemanticAnalyzer {
     fn analyze_lvalue(&mut self, lvalue: &Node) -> Type {
         match lvalue {
             Node::IdentExpr(i) => {
-                if let Some(symbol) = self.symbol_table.lookup(&i.name) {
+                if let Some(symbol) = self.core.symbol_table.lookup(&i.name) {
                     if let SymbolKind::Variable { var_type, .. } = &symbol.kind {
                         var_type.clone()
                     } else {
-                        self.add_error(
+                        self.core.add_error(
                             format!("'{}' is not a variable", i.name),
                             i.span,
                         );
                         Type::Error
                     }
                 } else {
-                    self.add_error(
+                            self.core.add_error(
                         format!("Variable '{}' not found", i.name),
                         i.span,
                     );
@@ -650,7 +657,7 @@ impl SemanticAnalyzer {
                     // For now, we assume integer indexing
                     *element_type
                 } else {
-                    self.add_error(
+                            self.core.add_error(
                         "Index expression must be applied to an array".to_string(),
                         idx.span,
                     );
@@ -664,14 +671,14 @@ impl SemanticAnalyzer {
                     if let Some(f) = fields.iter().find(|f| f.name == field.field) {
                         f.field_type.as_ref().clone()
                     } else {
-                        self.add_error(
+                        self.core.add_error(
                             format!("Field '{}' not found in record", field.field),
                             field.span,
                         );
                         Type::Error
                     }
                 } else {
-                    self.add_error(
+                            self.core.add_error(
                         "Field access must be applied to a record".to_string(),
                         field.span,
                     );
@@ -679,7 +686,7 @@ impl SemanticAnalyzer {
                 }
             }
             _ => {
-                self.add_error(
+                            self.core.add_error(
                     "Invalid lvalue (left-hand side of assignment)".to_string(),
                     lvalue.span(),
                 );
@@ -701,13 +708,13 @@ impl SemanticAnalyzer {
                 }
             },
             Node::IdentExpr(i) => {
-                if let Some(symbol) = self.symbol_table.lookup(&i.name) {
+                if let Some(symbol) = self.core.symbol_table.lookup(&i.name) {
                     match &symbol.kind {
                         SymbolKind::Variable { var_type, .. } => var_type.clone(),
                         SymbolKind::Constant { const_type, .. } => const_type.clone(),
                         SymbolKind::Function { return_type, .. } => return_type.clone(),
                         _ => {
-                            self.add_error(
+                            self.core.add_error(
                                 format!("'{}' is not a value", i.name),
                                 i.span,
                             );
@@ -715,7 +722,7 @@ impl SemanticAnalyzer {
                         }
                     }
                 } else {
-                    self.add_error(
+                            self.core.add_error(
                         format!("Identifier '{}' not found", i.name),
                         i.span,
                     );
@@ -735,11 +742,11 @@ impl SemanticAnalyzer {
                         } else if left_type.equals(&Type::word()) && right_type.is_assignable_to(&Type::word()) {
                             Type::word()
                         } else {
-                            self.add_error(
+                            self.core.add_error(
                                 format!(
                                     "Arithmetic operation requires numeric types, found {} and {}",
-                                    format_type(&left_type),
-                                    format_type(&right_type)
+                                    core::CoreAnalyzer::format_type(&left_type),
+                                    core::CoreAnalyzer::format_type(&right_type)
                                 ),
                                 bin.span,
                             );
@@ -752,11 +759,11 @@ impl SemanticAnalyzer {
                         if left_type.is_assignable_to(&right_type) || right_type.is_assignable_to(&left_type) {
                             Type::boolean()
                         } else {
-                            self.add_error(
+                            self.core.add_error(
                                 format!(
                                     "Comparison requires compatible types, found {} and {}",
-                                    format_type(&left_type),
-                                    format_type(&right_type)
+                                    core::CoreAnalyzer::format_type(&left_type),
+                                    core::CoreAnalyzer::format_type(&right_type)
                                 ),
                                 bin.span,
                             );
@@ -768,7 +775,7 @@ impl SemanticAnalyzer {
                         if left_type.equals(&Type::boolean()) && right_type.equals(&Type::boolean()) {
                             Type::boolean()
                         } else {
-                            self.add_error(
+                            self.core.add_error(
                                 "Logical operations require boolean operands".to_string(),
                                 bin.span,
                             );
@@ -801,7 +808,7 @@ impl SemanticAnalyzer {
                         if expr_type.equals(&Type::integer()) || expr_type.equals(&Type::word()) {
                             expr_type
                         } else {
-                            self.add_error(
+                            self.core.add_error(
                                 "Unary +/- requires numeric type".to_string(),
                                 unary.span,
                             );
@@ -813,7 +820,7 @@ impl SemanticAnalyzer {
                         if expr_type.equals(&Type::boolean()) {
                             Type::boolean()
                         } else {
-                            self.add_error(
+                            self.core.add_error(
                                 "Unary 'not' requires boolean type".to_string(),
                                 unary.span,
                             );
@@ -829,7 +836,7 @@ impl SemanticAnalyzer {
             }
             Node::CallExpr(call) => {
                 // Function call
-                let func_info = self.symbol_table.lookup(&call.name).and_then(|symbol| {
+                let func_info = self.core.symbol_table.lookup(&call.name).and_then(|symbol| {
                     if let SymbolKind::Function { return_type, params, .. } = &symbol.kind {
                         Some((return_type.clone(), params.clone()))
                     } else {
@@ -840,7 +847,7 @@ impl SemanticAnalyzer {
                 if let Some((return_type, params)) = func_info {
                     // Check argument count
                     if call.args.len() != params.len() {
-                        self.add_error(
+                        self.core.add_error(
                             format!(
                                 "Function '{}' expects {} arguments, found {}",
                                 call.name,
@@ -856,11 +863,11 @@ impl SemanticAnalyzer {
                     for (arg, param) in call.args.iter().zip(params.iter()) {
                         let arg_type = self.analyze_expression(arg);
                         if !arg_type.is_assignable_to(&param.param_type) {
-                            self.add_error(
+                            self.core.add_error(
                                 format!(
                                     "Argument type mismatch: expected {}, found {}",
-                                    format_type(&param.param_type),
-                                    format_type(&arg_type)
+                                    core::CoreAnalyzer::format_type(&param.param_type),
+                                    core::CoreAnalyzer::format_type(&arg_type)
                                 ),
                                 arg.span(),
                             );
@@ -868,14 +875,14 @@ impl SemanticAnalyzer {
                     }
 
                     return_type
-                } else if self.symbol_table.lookup(&call.name).is_some() {
-                    self.add_error(
+                } else if self.core.symbol_table.lookup(&call.name).is_some() {
+                            self.core.add_error(
                         format!("'{}' is not a function", call.name),
                         call.span,
                     );
                     Type::Error
                 } else {
-                    self.add_error(
+                            self.core.add_error(
                         format!("Function '{}' not found", call.name),
                         call.span,
                     );
@@ -889,7 +896,7 @@ impl SemanticAnalyzer {
                     // Check index type (for now, we assume integer indexing)
                     *element_type
                 } else {
-                    self.add_error(
+                            self.core.add_error(
                         "Index expression must be applied to an array".to_string(),
                         idx.span,
                     );
@@ -902,14 +909,14 @@ impl SemanticAnalyzer {
                     if let Some(f) = fields.iter().find(|f| f.name == field.field) {
                         f.field_type.as_ref().clone()
                     } else {
-                        self.add_error(
+                        self.core.add_error(
                             format!("Field '{}' not found in record", field.field),
                             field.span,
                         );
                         Type::Error
                     }
                 } else {
-                    self.add_error(
+                            self.core.add_error(
                         "Field access must be applied to a record".to_string(),
                         field.span,
                     );
@@ -929,7 +936,7 @@ impl SemanticAnalyzer {
                 Type::Error // TODO: Proper type resolution for inherited calls
             }
             _ => {
-                self.add_error(
+                            self.core.add_error(
                     "Invalid expression".to_string(),
                     expr.span(),
                 );
@@ -950,7 +957,7 @@ impl SemanticAnalyzer {
             },
             Node::IdentExpr(i) => {
                 // Check if identifier is a constant
-                if let Some(symbol) = self.symbol_table.lookup(&i.name) {
+                if let Some(symbol) = self.core.symbol_table.lookup(&i.name) {
                     if let SymbolKind::Constant { value: Some(cv), .. } = &symbol.kind {
                         Some(cv.clone())
                     } else {
@@ -1165,30 +1172,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Add an error diagnostic
-    fn add_error(&mut self, message: String, span: Span) {
-        let diag = Diagnostic::new(ErrorSeverity::Error, message, span)
-            .with_file(self.filename.clone().unwrap_or_else(|| "unknown".to_string()));
-        self.diagnostics.push(diag);
-    }
-}
-
-/// Format a type for error messages
-fn format_type(ty: &Type) -> String {
-    match ty {
-        Type::Primitive(p) => match p {
-            types::PrimitiveType::Integer => "integer".to_string(),
-            types::PrimitiveType::Byte => "byte".to_string(),
-            types::PrimitiveType::Word => "word".to_string(),
-            types::PrimitiveType::Boolean => "boolean".to_string(),
-            types::PrimitiveType::Char => "char".to_string(),
-        },
-        Type::Array { .. } => "array".to_string(),
-        Type::Record { .. } => "record".to_string(),
-        Type::Pointer { .. } => "pointer".to_string(),
-        Type::Named { name } => name.clone(),
-        Type::Error => "error".to_string(),
-    }
+    // add_error and format_type are now in core module
 }
 
 #[cfg(test)]
@@ -1199,8 +1183,8 @@ mod tests {
     #[test]
     fn test_semantic_analyzer_new() {
         let analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
-        assert_eq!(analyzer.diagnostics.len(), 0);
-        assert!(analyzer.symbol_table.is_global_scope());
+        assert_eq!(analyzer.core.diagnostics.len(), 0);
+        assert!(analyzer.core.symbol_table.is_global_scope());
     }
 
     #[test]
@@ -1211,11 +1195,14 @@ mod tests {
 
         // Create a simple program: program Test; begin end.
         let block = Node::Block(Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span,
         });
@@ -1337,22 +1324,21 @@ mod tests {
 
     #[test]
     fn test_constant_folding_if_true() {
-        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
         let span = Span::new(0, 10, 1, 1);
         
-        // Add variable x to symbol table
-        let var_symbol = Symbol {
-            kind: SymbolKind::Variable {
-                name: "x".to_string(),
-                var_type: Type::integer(),
-                span,
-            },
-            scope_level: 0,
-        };
-        analyzer.symbol_table.insert(var_symbol).unwrap();
-        
         // Test IF with constant true condition
+        // var x: integer;
         // if true then x := 1 else x := 2
+        let var_decl = Node::VarDecl(ast::VarDecl {
+            names: vec!["x".to_string()],
+            type_expr: Box::new(Node::NamedType(ast::NamedType {
+                name: "integer".to_string(),
+                span,
+            })),
+            absolute_address: None,
+            span,
+        });
+        
         let if_stmt = IfStmt {
             condition: Box::new(Node::LiteralExpr(LiteralExpr {
                 value: LiteralValue::Boolean(true),
@@ -1383,11 +1369,29 @@ mod tests {
             span,
         };
         
-        // Analyze - should only analyze then branch (constant folding)
-        analyzer.analyze_if_stmt(&if_stmt);
+        // Test via analyze() - should only analyze then branch (constant folding)
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+        let block = Node::Block(Block {
+            label_decls: vec![],
+            const_decls: vec![],
+            type_decls: vec![],
+            var_decls: vec![var_decl],
+            threadvar_decls: vec![],
+            proc_decls: vec![],
+            func_decls: vec![],
+            operator_decls: vec![],
+            statements: vec![Node::IfStmt(if_stmt)],
+            span,
+        });
+        let program = Node::Program(Program {
+            name: "Test".to_string(),
+            block: Box::new(block),
+            span,
+        });
+        let diagnostics = analyzer.analyze(&program);
         
         // Should have no errors (else branch is dead code, not analyzed)
-        assert_eq!(analyzer.diagnostics.len(), 0);
+        assert_eq!(diagnostics.len(), 0);
     }
 
     #[test]
@@ -1404,8 +1408,6 @@ mod tests {
             },
             scope_level: 0,
         };
-        analyzer.symbol_table.insert(var_symbol).unwrap();
-        
         // Test WHILE with constant false condition
         // while false do x := 1
         let while_stmt = WhileStmt {
@@ -1427,10 +1429,39 @@ mod tests {
             span,
         };
         
-        // Analyze - should skip body (constant folding)
-        analyzer.analyze_while_stmt(&while_stmt);
+        // Test via analyze() - should skip body (constant folding)
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+        // Add variable x to symbol table
+        let var_symbol = Symbol {
+            kind: SymbolKind::Variable {
+                name: "x".to_string(),
+                var_type: Type::integer(),
+                span,
+            },
+            scope_level: 0,
+        };
+        analyzer.core.symbol_table.insert(var_symbol).unwrap();
+        
+        let block = Node::Block(Block {
+            label_decls: vec![],
+            const_decls: vec![],
+            type_decls: vec![],
+            var_decls: vec![],
+            threadvar_decls: vec![],
+            proc_decls: vec![],
+            func_decls: vec![],
+            operator_decls: vec![],
+            statements: vec![Node::WhileStmt(while_stmt)],
+            span,
+        });
+        let program = Node::Program(Program {
+            name: "Test".to_string(),
+            block: Box::new(block),
+            span,
+        });
+        let diagnostics = analyzer.analyze(&program);
         
         // Should have no errors (body is dead code, not analyzed)
-        assert_eq!(analyzer.diagnostics.len(), 0);
+        assert_eq!(diagnostics.len(), 0);
     }
 }

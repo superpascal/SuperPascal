@@ -67,24 +67,35 @@ impl super::Parser {
             .map(|t| t.span)
             .unwrap_or_else(|| Span::at(0, 1, 1));
 
+        let mut label_decls = vec![];
         let mut const_decls = vec![];
         let mut type_decls = vec![];
         let mut var_decls = vec![];
+        let mut threadvar_decls = vec![];
         let mut proc_decls = vec![];
         let mut func_decls = vec![];
+        let mut operator_decls = vec![];
 
-        // Parse declarations (const, type, var, procedures, functions)
+        // Parse declarations (label, const, resourcestring, type, var, threadvar, procedures, functions, operators)
         loop {
-            if self.check(&TokenKind::KwConst) {
+            if self.check(&TokenKind::KwLabel) {
+                label_decls.extend(self.parse_label_decls()?);
+            } else if self.check(&TokenKind::KwConst) {
                 const_decls.extend(self.parse_const_decls()?);
+            } else if self.check(&TokenKind::KwResourcestring) {
+                const_decls.extend(self.parse_resourcestring_decls()?);
             } else if self.check(&TokenKind::KwType) {
                 type_decls.extend(self.parse_type_decls()?);
             } else if self.check(&TokenKind::KwVar) {
                 var_decls.extend(self.parse_var_decls()?);
+            } else if self.check(&TokenKind::KwThreadvar) {
+                threadvar_decls.extend(self.parse_threadvar_decls()?);
             } else if self.check(&TokenKind::KwProcedure) {
                 proc_decls.push(self.parse_procedure_decl()?);
             } else if self.check(&TokenKind::KwFunction) {
                 func_decls.push(self.parse_function_decl()?);
+            } else if self.check(&TokenKind::KwOperator) {
+                operator_decls.push(self.parse_operator_decl()?);
             } else {
                 break;
             }
@@ -109,14 +120,64 @@ impl super::Parser {
         let span = start_span.merge(end_token.span);
 
         Ok(Node::Block(ast::Block {
+            label_decls,
             const_decls,
             type_decls,
             var_decls,
+            threadvar_decls,
             proc_decls,
             func_decls,
+            operator_decls,
             statements,
             span,
         }))
+    }
+
+    /// Parse label declarations: LABEL label { , label } ;
+    pub(crate) fn parse_label_decls(&mut self) -> ParserResult<Vec<Node>> {
+        self.consume(TokenKind::KwLabel, "LABEL")?;
+        let start_span = self
+            .current()
+            .map(|t| t.span)
+            .unwrap_or_else(|| Span::at(0, 1, 1));
+        
+        let mut labels = vec![];
+        loop {
+            // Labels can be identifiers or integer literals
+            let label_token = self.current().ok_or_else(|| ParserError::UnexpectedEof {
+                expected: "label (identifier or integer)".to_string(),
+                span: start_span,
+            })?;
+            
+            let label_name = match &label_token.kind {
+                TokenKind::Identifier(name) => name.clone(),
+                TokenKind::IntegerLiteral { value, .. } => value.to_string(),
+                _ => return Err(ParserError::InvalidSyntax {
+                    message: "Expected identifier or integer literal for label".to_string(),
+                    span: label_token.span,
+                }),
+            };
+            labels.push(label_name);
+            self.advance()?;
+            
+            if !self.check(&TokenKind::Comma) {
+                break;
+            }
+            self.advance()?; // consume comma
+        }
+        
+        self.consume(TokenKind::Semicolon, ";")?;
+        
+        let end_span = self
+            .current()
+            .map(|t| t.span)
+            .unwrap_or_else(|| start_span);
+        let span = start_span.merge(end_span);
+        
+        Ok(vec![Node::LabelDecl(ast::LabelDecl {
+            labels,
+            span,
+        })])
     }
 
     /// Parse constant declarations: CONST const_decl { ; const_decl }
@@ -129,7 +190,7 @@ impl super::Parser {
                 break;
             }
             self.advance()?;
-            if !self.check(&TokenKind::Identifier(String::new())) {
+            if !matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
                 break;
             }
         }
@@ -159,8 +220,48 @@ impl super::Parser {
         Ok(Node::ConstDecl(ast::ConstDecl {
             name,
             value: Box::new(value),
+            is_resourcestring: false, // Set to true when parsing RESOURCESTRING section
             span,
         }))
+    }
+
+    /// Parse threadvar declarations: THREADVAR var_decl { ; var_decl }
+    pub(crate) fn parse_threadvar_decls(&mut self) -> ParserResult<Vec<Node>> {
+        self.consume(TokenKind::KwThreadvar, "THREADVAR")?;
+        let mut decls = vec![];
+        loop {
+            decls.push(self.parse_var_decl()?);
+            if !self.check(&TokenKind::Semicolon) {
+                break;
+            }
+            self.advance()?;
+            if !matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
+                break;
+            }
+        }
+        Ok(decls)
+    }
+
+    /// Parse resourcestring declarations: RESOURCESTRING const_decl { ; const_decl }
+    pub(crate) fn parse_resourcestring_decls(&mut self) -> ParserResult<Vec<Node>> {
+        self.consume(TokenKind::KwResourcestring, "RESOURCESTRING")?;
+        let mut decls = vec![];
+        loop {
+            let mut const_decl = self.parse_const_decl()?;
+            // Mark as resourcestring
+            if let Node::ConstDecl(ref mut c) = const_decl {
+                c.is_resourcestring = true;
+            }
+            decls.push(const_decl);
+            if !self.check(&TokenKind::Semicolon) {
+                break;
+            }
+            self.advance()?;
+            if !matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
+                break;
+            }
+        }
+        Ok(decls)
     }
 
     /// Parse type declarations: TYPE type_decl { ; type_decl }
@@ -173,7 +274,7 @@ impl super::Parser {
                 break;
             }
             self.advance()?;
-            if !self.check(&TokenKind::Identifier(String::new())) {
+            if !matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
                 break;
             }
         }
@@ -217,14 +318,14 @@ impl super::Parser {
                 break;
             }
             self.advance()?;
-            if !self.check(&TokenKind::Identifier(String::new())) {
+            if !matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
                 break;
             }
         }
         Ok(decls)
     }
 
-    /// Parse single variable declaration: identifier_list : type
+    /// Parse single variable declaration: identifier_list : type [ABSOLUTE expression]
     fn parse_var_decl(&mut self) -> ParserResult<Node> {
         let start_span = self
             .current()
@@ -252,10 +353,22 @@ impl super::Parser {
         self.consume(TokenKind::Colon, ":")?;
         let type_expr = self.parse_type()?;
 
-        let span = start_span.merge(type_expr.span());
+        // Optional ABSOLUTE address: ABSOLUTE expression
+        let absolute_address = if self.check(&TokenKind::KwAbsolute) {
+            self.advance()?; // consume ABSOLUTE
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        let end_span = absolute_address.as_ref()
+            .map(|a| a.span())
+            .unwrap_or_else(|| type_expr.span());
+        let span = start_span.merge(end_span);
         Ok(Node::VarDecl(ast::VarDecl {
             names,
             type_expr: Box::new(type_expr),
+            absolute_address,
             span,
         }))
     }
@@ -311,11 +424,14 @@ impl super::Parser {
 
         // Create an empty block for forward declarations
         let empty_block = Node::Block(ast::Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span: start_span,
         });
@@ -329,6 +445,7 @@ impl super::Parser {
             is_forward: false,
             is_external: false,
             external_name: None,
+            is_class_method: false, // Forward declarations can't be class methods
             span,
         }))
     }
@@ -357,11 +474,14 @@ impl super::Parser {
 
         // Create an empty block for forward declarations
         let empty_block = Node::Block(ast::Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span: start_span,
         });
@@ -376,16 +496,38 @@ impl super::Parser {
             is_forward: false,
             is_external: false,
             external_name: None,
+            is_class_method: false, // Forward declarations can't be class methods
             span,
         }))
     }
 
     /// Parse procedure declaration: PROCEDURE [ClassName.]identifier [ ( params ) ] ; [block | FORWARD | EXTERNAL [name]] ;
+    /// 
+    /// If `in_class_context` is true, procedures without explicit blocks are treated as forward declarations.
+    /// Otherwise, they may be nested routines (if followed by declarations/BEGIN).
     pub(crate) fn parse_procedure_decl(&mut self) -> ParserResult<Node> {
+        self.parse_procedure_decl_impl(false)
+    }
+
+    /// Parse procedure declaration in class context (always forward if no explicit block)
+    pub(crate) fn parse_procedure_decl_in_class(&mut self) -> ParserResult<Node> {
+        self.parse_procedure_decl_impl(true)
+    }
+
+    /// Internal implementation with context flag
+    fn parse_procedure_decl_impl(&mut self, in_class_context: bool) -> ParserResult<Node> {
         let start_span = self
             .current()
             .map(|t| t.span)
             .unwrap_or_else(|| Span::at(0, 1, 1));
+
+        // Check for CLASS keyword (class procedure)
+        let is_class_method = if self.check(&TokenKind::KwClass) {
+            self.advance()?; // consume CLASS
+            true
+        } else {
+            false
+        };
 
         self.consume(TokenKind::KwProcedure, "PROCEDURE")?;
 
@@ -410,14 +552,14 @@ impl super::Parser {
             // Optional external name: EXTERNAL 'name' or EXTERNAL name
             let ext_name = if let Some(token) = self.current() {
                 match &token.kind {
-                    TokenKind::StringLiteral(s) => {
+                    TokenKind::StringLiteral(_s) => {
                         let name_token = self.advance_and_get_token()?;
                         match name_token.kind {
                             TokenKind::StringLiteral(s) => Some(s),
                             _ => None,
                         }
                     }
-                    TokenKind::Identifier(s) => {
+                    TokenKind::Identifier(_s) => {
                         let name_token = self.advance_and_get_token()?;
                         match name_token.kind {
                             TokenKind::Identifier(s) => Some(s),
@@ -431,7 +573,7 @@ impl super::Parser {
             };
             self.consume(TokenKind::Semicolon, ";")?;
             (false, true, ext_name)
-        } else {
+        } else if self.check(&TokenKind::KwBegin) {
             // Regular procedure with block
             let block = self.parse_block()?;
             self.consume(TokenKind::Semicolon, ";")?;
@@ -444,17 +586,66 @@ impl super::Parser {
                 is_forward: false,
                 is_external: false,
                 external_name: None,
+                is_class_method,
                 span,
             }));
+        } else if self.check(&TokenKind::KwLabel) ||
+                   self.check(&TokenKind::KwConst) ||
+                   self.check(&TokenKind::KwResourcestring) ||
+                   self.check(&TokenKind::KwType) ||
+                   self.check(&TokenKind::KwVar) ||
+                   self.check(&TokenKind::KwThreadvar) ||
+                   self.check(&TokenKind::KwOperator) {
+            // Procedure with nested declarations (VAR, CONST, TYPE, etc. before BEGIN) - parse block
+            let block = self.parse_block()?;
+            self.consume(TokenKind::Semicolon, ";")?;
+            let span = start_span.merge(block.span());
+            return Ok(Node::ProcDecl(ast::ProcDecl {
+                name,
+                class_name,
+                params,
+                block: Box::new(block),
+                is_forward: false,
+                is_external: false,
+                external_name: None,
+                is_class_method,
+                span,
+            }));
+        } else if in_class_context {
+            // In class context, PROCEDURE/FUNCTION without explicit block is forward declaration
+            (true, false, None)
+        } else if self.check(&TokenKind::KwProcedure) || self.check(&TokenKind::KwFunction) {
+            // PROCEDURE/FUNCTION - try parsing as nested routine
+            // parse_block will handle nested PROCEDURE/FUNCTION declarations
+            let block = self.parse_block()?;
+            self.consume(TokenKind::Semicolon, ";")?;
+            let span = start_span.merge(block.span());
+            return Ok(Node::ProcDecl(ast::ProcDecl {
+                name,
+                class_name,
+                params,
+                block: Box::new(block),
+                is_forward: false,
+                is_external: false,
+                external_name: None,
+                is_class_method,
+                span,
+            }));
+        } else {
+            // Forward declaration (no block, no FORWARD keyword - common in classes)
+            (true, false, None)
         };
 
         // Create empty block for forward/external declarations
         let empty_block = Node::Block(ast::Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span: start_span,
         });
@@ -468,16 +659,35 @@ impl super::Parser {
             is_forward,
             is_external,
             external_name,
+            is_class_method,
             span,
         }))
     }
 
     /// Parse function declaration: FUNCTION [ClassName.]identifier [ ( params ) ] : type ; block ;
     pub(crate) fn parse_function_decl(&mut self) -> ParserResult<Node> {
+        self.parse_function_decl_impl(false)
+    }
+
+    /// Parse function declaration in class context (always forward if no explicit block)
+    pub(crate) fn parse_function_decl_in_class(&mut self) -> ParserResult<Node> {
+        self.parse_function_decl_impl(true)
+    }
+
+    /// Internal implementation with context flag
+    fn parse_function_decl_impl(&mut self, in_class_context: bool) -> ParserResult<Node> {
         let start_span = self
             .current()
             .map(|t| t.span)
             .unwrap_or_else(|| Span::at(0, 1, 1));
+
+        // Check for CLASS keyword (class function)
+        let is_class_method = if self.check(&TokenKind::KwClass) {
+            self.advance()?; // consume CLASS
+            true
+        } else {
+            false
+        };
 
         self.consume(TokenKind::KwFunction, "FUNCTION")?;
 
@@ -504,14 +714,272 @@ impl super::Parser {
             // Optional external name: EXTERNAL 'name' or EXTERNAL name
             let ext_name = if let Some(token) = self.current() {
                 match &token.kind {
-                    TokenKind::StringLiteral(s) => {
+                    TokenKind::StringLiteral(_s) => {
                         let name_token = self.advance_and_get_token()?;
                         match name_token.kind {
                             TokenKind::StringLiteral(s) => Some(s),
                             _ => None,
                         }
                     }
-                    TokenKind::Identifier(s) => {
+                    TokenKind::Identifier(_s) => {
+                        let name_token = self.advance_and_get_token()?;
+                        match name_token.kind {
+                            TokenKind::Identifier(s) => Some(s),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            self.consume(TokenKind::Semicolon, ";")?;
+            (false, true, ext_name)
+        } else if self.check(&TokenKind::KwBegin) {
+            // Regular function with block
+            let block = self.parse_block()?;
+            self.consume(TokenKind::Semicolon, ";")?;
+            let span = start_span.merge(block.span());
+            return Ok(Node::FuncDecl(ast::FuncDecl {
+                name,
+                class_name,
+                params,
+                return_type: Box::new(return_type),
+                block: Box::new(block),
+                is_forward: false,
+                is_external: false,
+                external_name: None,
+                is_class_method,
+                span,
+            }));
+        } else if self.check(&TokenKind::KwLabel) ||
+                   self.check(&TokenKind::KwConst) ||
+                   self.check(&TokenKind::KwResourcestring) ||
+                   self.check(&TokenKind::KwType) ||
+                   self.check(&TokenKind::KwVar) ||
+                   self.check(&TokenKind::KwThreadvar) ||
+                   self.check(&TokenKind::KwOperator) {
+            // Function with nested declarations (VAR, CONST, TYPE, etc. before BEGIN) - parse block
+            let block = self.parse_block()?;
+            self.consume(TokenKind::Semicolon, ";")?;
+            let span = start_span.merge(block.span());
+            return Ok(Node::FuncDecl(ast::FuncDecl {
+                name,
+                class_name,
+                params,
+                return_type: Box::new(return_type),
+                block: Box::new(block),
+                is_forward: false,
+                is_external: false,
+                external_name: None,
+                is_class_method,
+                span,
+            }));
+        } else if in_class_context {
+            // In class context, PROCEDURE/FUNCTION without explicit block is forward declaration
+            (true, false, None)
+        } else if self.check(&TokenKind::KwProcedure) || self.check(&TokenKind::KwFunction) {
+            // PROCEDURE/FUNCTION - try parsing as nested routine
+            // parse_block will handle nested PROCEDURE/FUNCTION declarations
+            let block = self.parse_block()?;
+            self.consume(TokenKind::Semicolon, ";")?;
+            let span = start_span.merge(block.span());
+            return Ok(Node::FuncDecl(ast::FuncDecl {
+                name,
+                class_name,
+                params,
+                return_type: Box::new(return_type),
+                block: Box::new(block),
+                is_forward: false,
+                is_external: false,
+                external_name: None,
+                is_class_method,
+                span,
+            }));
+        } else {
+            // Forward declaration (no block, no FORWARD keyword - common in classes)
+            (true, false, None)
+        };
+
+        // Create empty block for forward/external declarations
+        let empty_block = Node::Block(ast::Block {
+            label_decls: vec![],
+            const_decls: vec![],
+            type_decls: vec![],
+            var_decls: vec![],
+            threadvar_decls: vec![],
+            proc_decls: vec![],
+            func_decls: vec![],
+            operator_decls: vec![],
+            statements: vec![],
+            span: start_span,
+        });
+
+        let span = start_span.merge(return_type.span());
+        Ok(Node::FuncDecl(ast::FuncDecl {
+            name,
+            class_name,
+            params,
+            return_type: Box::new(return_type),
+            block: Box::new(empty_block),
+            is_forward,
+            is_external,
+            external_name,
+            is_class_method,
+            span,
+        }))
+    }
+
+    /// Parse operator name: [ClassName.]operator_name
+    /// The operator_name can be a symbol (+, -, *, etc.) or an identifier (sub, add, etc.)
+    /// Returns (class_name, operator_name) where class_name is None if not present
+    fn parse_operator_name(&mut self) -> ParserResult<(Option<String>, String)> {
+        // Check if we have a class name prefix (ClassName.)
+        let class_name = if let Some(token) = self.current() {
+            if matches!(token.kind, TokenKind::Identifier(_)) {
+                let name_token = self.advance_and_get_token()?;
+                let first_name = match name_token.kind {
+                    TokenKind::Identifier(name) => name,
+                    _ => unreachable!(),
+                };
+                
+                // Check if there's a dot
+                if self.check(&TokenKind::Dot) {
+                    self.advance()?; // consume .
+                    Some(first_name)
+                } else {
+                    // No dot, so this is the operator name itself (identifier)
+                    return Ok((None, first_name));
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Now parse the operator name (can be symbol or identifier)
+        let operator_name = if let Some(token) = self.current() {
+            match &token.kind {
+                // Operator symbols
+                TokenKind::Plus => {
+                    self.advance()?;
+                    "+".to_string()
+                }
+                TokenKind::Minus => {
+                    self.advance()?;
+                    "-".to_string()
+                }
+                TokenKind::Star => {
+                    self.advance()?;
+                    "*".to_string()
+                }
+                TokenKind::Slash => {
+                    self.advance()?;
+                    "/".to_string()
+                }
+                TokenKind::Equal => {
+                    self.advance()?;
+                    "=".to_string()
+                }
+                TokenKind::NotEqual => {
+                    self.advance()?;
+                    "<>".to_string()
+                }
+                TokenKind::Less => {
+                    self.advance()?;
+                    "<".to_string()
+                }
+                TokenKind::LessEqual => {
+                    self.advance()?;
+                    "<=".to_string()
+                }
+                TokenKind::Greater => {
+                    self.advance()?;
+                    ">".to_string()
+                }
+                TokenKind::GreaterEqual => {
+                    self.advance()?;
+                    ">=".to_string()
+                }
+                TokenKind::Dot => {
+                    self.advance()?;
+                    ".".to_string()
+                }
+                TokenKind::Caret => {
+                    self.advance()?;
+                    "^".to_string()
+                }
+                // Identifier operator name
+                TokenKind::Identifier(name) => {
+                    let name_token = self.advance_and_get_token()?;
+                    match name_token.kind {
+                        TokenKind::Identifier(name) => name,
+                        _ => unreachable!(),
+                    }
+                }
+                _ => {
+                    return Err(ParserError::InvalidSyntax {
+                        message: "Expected operator symbol or identifier".to_string(),
+                        span: token.span,
+                    });
+                }
+            }
+        } else {
+            let span = self.peek_token()
+                .map(|t| t.span)
+                .unwrap_or_else(|| Span::at(0, 1, 1));
+            return Err(ParserError::UnexpectedEof {
+                expected: "operator name".to_string(),
+                span,
+            });
+        };
+
+        Ok((class_name, operator_name))
+    }
+
+    /// Parse operator declaration: OPERATOR [ClassName.]operator_name [ ( params ) ] : return_type ; [block | FORWARD | EXTERNAL] ;
+    pub(crate) fn parse_operator_decl(&mut self) -> ParserResult<Node> {
+        let start_span = self
+            .current()
+            .map(|t| t.span)
+            .unwrap_or_else(|| Span::at(0, 1, 1));
+
+        self.consume(TokenKind::KwOperator, "OPERATOR")?;
+
+        // Parse operator name: [ClassName.]operator_name
+        let (class_name, operator_name) = self.parse_operator_name()?;
+
+        // Optional parameters
+        let params = if self.check(&TokenKind::LeftParen) {
+            self.parse_params()?
+        } else {
+            vec![]
+        };
+
+        // Return type (required for operators)
+        self.consume(TokenKind::Colon, ":")?;
+        let return_type = self.parse_type()?;
+        self.consume(TokenKind::Semicolon, ";")?;
+
+        // Check for FORWARD or EXTERNAL keyword
+        let (is_forward, is_external, external_name) = if self.check(&TokenKind::KwForward) {
+            self.advance()?; // consume FORWARD
+            self.consume(TokenKind::Semicolon, ";")?;
+            (true, false, None)
+        } else if self.check(&TokenKind::KwExternal) {
+            self.advance()?; // consume EXTERNAL
+            // Optional external name: EXTERNAL 'name' or EXTERNAL name
+            let ext_name = if let Some(token) = self.current() {
+                match &token.kind {
+                    TokenKind::StringLiteral(_s) => {
+                        let name_token = self.advance_and_get_token()?;
+                        match name_token.kind {
+                            TokenKind::StringLiteral(s) => Some(s),
+                            _ => None,
+                        }
+                    }
+                    TokenKind::Identifier(_s) => {
                         let name_token = self.advance_and_get_token()?;
                         match name_token.kind {
                             TokenKind::Identifier(s) => Some(s),
@@ -526,12 +994,12 @@ impl super::Parser {
             self.consume(TokenKind::Semicolon, ";")?;
             (false, true, ext_name)
         } else {
-            // Regular function with block
+            // Regular operator with block
             let block = self.parse_block()?;
             self.consume(TokenKind::Semicolon, ";")?;
             let span = start_span.merge(block.span());
-            return Ok(Node::FuncDecl(ast::FuncDecl {
-                name,
+            return Ok(Node::OperatorDecl(ast::OperatorDecl {
+                operator_name,
                 class_name,
                 params,
                 return_type: Box::new(return_type),
@@ -545,18 +1013,21 @@ impl super::Parser {
 
         // Create empty block for forward/external declarations
         let empty_block = Node::Block(ast::Block {
+            label_decls: vec![],
             const_decls: vec![],
             type_decls: vec![],
             var_decls: vec![],
+            threadvar_decls: vec![],
             proc_decls: vec![],
             func_decls: vec![],
+            operator_decls: vec![],
             statements: vec![],
             span: start_span,
         });
 
         let span = start_span.merge(return_type.span());
-        Ok(Node::FuncDecl(ast::FuncDecl {
-            name,
+        Ok(Node::OperatorDecl(ast::OperatorDecl {
+            operator_name,
             class_name,
             params,
             return_type: Box::new(return_type),
@@ -587,7 +1058,7 @@ impl super::Parser {
         Ok(params)
     }
 
-    /// Parse parameter: [VAR | CONST] identifier_list : type
+    /// Parse parameter: [VAR | CONST | CONSTREF | OUT] identifier_list : type [= default_value]
     pub(crate) fn parse_param(&mut self) -> ParserResult<ast::Param> {
         let start_span = self
             .current()
@@ -600,6 +1071,12 @@ impl super::Parser {
         } else if self.check(&TokenKind::KwConst) {
             self.advance()?;
             ast::ParamType::Const
+        } else if self.check(&TokenKind::KwConstref) {
+            self.advance()?;
+            ast::ParamType::ConstRef
+        } else if self.check(&TokenKind::KwOut) {
+            self.advance()?;
+            ast::ParamType::Out
         } else {
             ast::ParamType::Value
         };
@@ -625,11 +1102,23 @@ impl super::Parser {
         self.consume(TokenKind::Colon, ":")?;
         let type_expr = self.parse_type()?;
 
-        let span = start_span.merge(type_expr.span());
+        // Optional default value: = expression
+        let default_value = if self.check(&TokenKind::Equal) {
+            self.advance()?; // consume =
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        let end_span = default_value.as_ref()
+            .map(|v| v.span())
+            .unwrap_or_else(|| type_expr.span());
+        let span = start_span.merge(end_span);
         Ok(ast::Param {
             names,
             param_type,
             type_expr: Box::new(type_expr),
+            default_value,
             span,
         })
     }
@@ -1520,6 +2009,359 @@ mod tests {
                     assert!(!ext_func.is_forward);
                     assert!(ext_func.is_external);
                     assert_eq!(ext_func.external_name, Some("ext_func".to_string()));
+                }
+            }
+        }
+    }
+
+    // ========== Operator Declaration Tests ==========
+
+    #[test]
+    fn test_parse_operator_simple() {
+        let source = r#"
+            program Test;
+            operator +(a, b: integer): integer;
+            begin
+                Result := a + b;
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                assert_eq!(block.operator_decls.len(), 1);
+                if let Node::OperatorDecl(op) = &block.operator_decls[0] {
+                    assert_eq!(op.operator_name, "+");
+                    assert_eq!(op.class_name, None);
+                    assert_eq!(op.params.len(), 1);
+                    assert_eq!(op.params[0].names.len(), 2); // a, b
+                    assert!(!op.is_forward);
+                    assert!(!op.is_external);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_operator_class() {
+        let source = r#"
+            program Test;
+            operator MyClass.+(a, b: integer): integer;
+            begin
+                Result := a + b;
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                assert_eq!(block.operator_decls.len(), 1);
+                if let Node::OperatorDecl(op) = &block.operator_decls[0] {
+                    assert_eq!(op.operator_name, "+");
+                    assert_eq!(op.class_name, Some("MyClass".to_string()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_operator_named() {
+        let source = r#"
+            program Test;
+            operator sub(a, b: integer): integer;
+            begin
+                Result := a - b;
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                assert_eq!(block.operator_decls.len(), 1);
+                if let Node::OperatorDecl(op) = &block.operator_decls[0] {
+                    assert_eq!(op.operator_name, "sub");
+                    assert_eq!(op.class_name, None);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_operator_forward() {
+        let source = r#"
+            program Test;
+            operator +(a, b: integer): integer; forward;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::OperatorDecl(op) = &block.operator_decls[0] {
+                    assert_eq!(op.operator_name, "+");
+                    assert!(op.is_forward);
+                    assert!(!op.is_external);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_operator_external() {
+        let source = r#"
+            program Test;
+            operator +(a, b: integer): integer; external 'add_func';
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::OperatorDecl(op) = &block.operator_decls[0] {
+                    assert_eq!(op.operator_name, "+");
+                    assert!(!op.is_forward);
+                    assert!(op.is_external);
+                    assert_eq!(op.external_name, Some("add_func".to_string()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_operator_multiple_symbols() {
+        let source = r#"
+            program Test;
+            operator +(a, b: integer): integer;
+            begin
+            end;
+            operator -(a, b: integer): integer;
+            begin
+            end;
+            operator *(a, b: integer): integer;
+            begin
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                assert_eq!(block.operator_decls.len(), 3);
+                if let Node::OperatorDecl(op1) = &block.operator_decls[0] {
+                    assert_eq!(op1.operator_name, "+");
+                }
+                if let Node::OperatorDecl(op2) = &block.operator_decls[1] {
+                    assert_eq!(op2.operator_name, "-");
+                }
+                if let Node::OperatorDecl(op3) = &block.operator_decls[2] {
+                    assert_eq!(op3.operator_name, "*");
+                }
+            }
+        }
+    }
+
+    // ========== Advanced Declarations Tests ==========
+
+    #[test]
+    fn test_parse_threadvar() {
+        let source = r#"
+            program Test;
+            threadvar
+                x: integer;
+                y, z: word;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                assert_eq!(block.threadvar_decls.len(), 2);
+                if let Node::VarDecl(v1) = &block.threadvar_decls[0] {
+                    assert_eq!(v1.names, vec!["x"]);
+                }
+                if let Node::VarDecl(v2) = &block.threadvar_decls[1] {
+                    assert_eq!(v2.names, vec!["y", "z"]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_resourcestring() {
+        let source = r#"
+            program Test;
+            resourcestring
+                msg1 = 'Hello';
+                msg2 = 'World';
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                // RESOURCESTRING constants are added to const_decls
+                assert!(block.const_decls.len() >= 2);
+                if let Node::ConstDecl(c) = &block.const_decls[0] {
+                    assert_eq!(c.name, "msg1");
+                    assert!(c.is_resourcestring);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_constref_parameter() {
+        let source = r#"
+            program Test;
+            procedure Proc(constref x: integer);
+            begin
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::ProcDecl(proc) = &block.proc_decls[0] {
+                    assert_eq!(proc.params.len(), 1);
+                    assert_eq!(proc.params[0].param_type, ast::ParamType::ConstRef);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_out_parameter() {
+        let source = r#"
+            program Test;
+            procedure Proc(out x: integer);
+            begin
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::ProcDecl(proc) = &block.proc_decls[0] {
+                    assert_eq!(proc.params.len(), 1);
+                    assert_eq!(proc.params[0].param_type, ast::ParamType::Out);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_variable() {
+        let source = r#"
+            program Test;
+            var
+                StatusReg: byte absolute $8000;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                assert_eq!(block.var_decls.len(), 1);
+                if let Node::VarDecl(v1) = &block.var_decls[0] {
+                    assert_eq!(v1.names, vec!["StatusReg"]);
+                    assert!(v1.absolute_address.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_default_parameter() {
+        let source = r#"
+            program Test;
+            procedure Proc(x: integer = 10; y: word = 20);
+            begin
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::ProcDecl(proc) = &block.proc_decls[0] {
+                    assert_eq!(proc.params.len(), 2);
+                    assert!(proc.params[0].default_value.is_some());
+                    assert!(proc.params[1].default_value.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_mixed_parameter_modes() {
+        let source = r#"
+            program Test;
+            procedure Proc(
+                a: integer;
+                var b: integer;
+                const c: integer;
+                constref d: integer;
+                out e: integer
+            );
+            begin
+            end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::ProcDecl(proc) = &block.proc_decls[0] {
+                    assert_eq!(proc.params.len(), 5);
+                    assert_eq!(proc.params[0].param_type, ast::ParamType::Value);
+                    assert_eq!(proc.params[1].param_type, ast::ParamType::Var);
+                    assert_eq!(proc.params[2].param_type, ast::ParamType::Const);
+                    assert_eq!(proc.params[3].param_type, ast::ParamType::ConstRef);
+                    assert_eq!(proc.params[4].param_type, ast::ParamType::Out);
                 }
             }
         }

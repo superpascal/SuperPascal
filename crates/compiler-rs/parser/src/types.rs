@@ -77,6 +77,24 @@ impl super::Parser {
                 length,
                 span,
             }))
+        } else if self.check(&TokenKind::KwFile) {
+            // FILE or FILE OF type
+            self.advance()?; // consume FILE
+            let element_type = if self.check(&TokenKind::KwOf) {
+                self.advance()?; // consume OF
+                Some(Box::new(self.parse_type()?))
+            } else {
+                None
+            };
+            let span = if let Some(ref elem_type) = element_type {
+                start_span.merge(elem_type.span())
+            } else {
+                start_span
+            };
+            Ok(Node::FileType(ast::FileType {
+                element_type,
+                span,
+            }))
         } else if self.check(&TokenKind::KwRecord) {
             self.advance()?;
             let mut fields = vec![];
@@ -110,6 +128,9 @@ impl super::Parser {
         } else if self.check(&TokenKind::KwProcedure) || self.check(&TokenKind::KwFunction) {
             // Procedural type: PROCEDURE [params] [OF OBJECT] or FUNCTION [params]: return_type [OF OBJECT]
             self.parse_procedural_type()
+        } else if self.check(&TokenKind::LeftParen) {
+            // Enum type: ( identifier, identifier, ... )
+            self.parse_enum_type()
         } else {
             // Accept either identifier or primitive type keywords
             let name_token = if matches!(self.current().map(|t| &t.kind), Some(TokenKind::Identifier(_))) {
@@ -173,6 +194,42 @@ impl super::Parser {
         }
     }
 
+    /// Parse enum type: ( identifier, identifier, ... )
+    fn parse_enum_type(&mut self) -> ParserResult<Node> {
+        let start_span = self
+            .current()
+            .map(|t| t.span)
+            .unwrap_or_else(|| Span::at(0, 1, 1));
+
+        self.consume(TokenKind::LeftParen, "(")?;
+
+        let mut values = vec![];
+        loop {
+            let value_token = self.consume(TokenKind::Identifier(String::new()), "enum value identifier")?;
+            let value = match &value_token.kind {
+                TokenKind::Identifier(name) => name.clone(),
+                _ => return Err(ParserError::InvalidSyntax {
+                    message: "Expected enum value identifier".to_string(),
+                    span: value_token.span,
+                }),
+            };
+            values.push(value);
+
+            if !self.check(&TokenKind::Comma) {
+                break;
+            }
+            self.advance()?; // consume comma
+        }
+
+        let end_token = self.consume(TokenKind::RightParen, ")")?;
+        let span = start_span.merge(end_token.span);
+
+        Ok(Node::EnumType(ast::EnumType {
+            values,
+            span,
+        }))
+    }
+
     /// Parse procedural type: PROCEDURE [params] [OF OBJECT] or FUNCTION [params]: return_type [OF OBJECT]
     fn parse_procedural_type(&mut self) -> ParserResult<Node> {
         let start_span = self
@@ -189,7 +246,7 @@ impl super::Parser {
             let mut params = vec![];
             if !self.check(&TokenKind::RightParen) {
                 loop {
-                    // Parse parameter: [var|const] identifier {, identifier} : type
+                    // Parse parameter: [var|const|constref|out] identifier {, identifier} : type
                     let mut param_names = vec![];
                     let param_mode = if self.check(&TokenKind::KwVar) {
                         self.advance()?;
@@ -197,6 +254,12 @@ impl super::Parser {
                     } else if self.check(&TokenKind::KwConst) {
                         self.advance()?;
                         ast::ParamType::Const
+                    } else if self.check(&TokenKind::KwConstref) {
+                        self.advance()?;
+                        ast::ParamType::ConstRef
+                    } else if self.check(&TokenKind::KwOut) {
+                        self.advance()?;
+                        ast::ParamType::Out
                     } else {
                         ast::ParamType::Value
                     };
@@ -222,6 +285,7 @@ impl super::Parser {
                         names: param_names,
                         param_type: param_mode,
                         type_expr: Box::new(param_type),
+                        default_value: None,
                         span: param_span,
                     });
                     if !self.check(&TokenKind::Semicolon) {
@@ -1202,6 +1266,231 @@ mod tests {
             }
         } else {
             panic!("Expected Program");
+        }
+    }
+
+    // ========== File Type Tests ==========
+
+    #[test]
+    fn test_parse_file_type_untyped() {
+        let source = r#"
+            program Test;
+            var f: file;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::VarDecl(var_decl) = &block.var_decls[0] {
+                    if let Node::FileType(file_type) = var_decl.type_expr.as_ref() {
+                        assert!(file_type.element_type.is_none(), "Expected untyped file");
+                    } else {
+                        panic!("Expected FileType");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_file_type_typed() {
+        let source = r#"
+            program Test;
+            var f: file of integer;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::VarDecl(var_decl) = &block.var_decls[0] {
+                    if let Node::FileType(file_type) = var_decl.type_expr.as_ref() {
+                        assert!(file_type.element_type.is_some(), "Expected typed file");
+                        if let Some(element_type) = &file_type.element_type {
+                            if let Node::NamedType(named) = element_type.as_ref() {
+                                assert_eq!(named.name, "integer");
+                            } else {
+                                panic!("Expected NamedType for element type");
+                            }
+                        }
+                    } else {
+                        panic!("Expected FileType");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_file_type_in_type_declaration() {
+        let source = r#"
+            program Test;
+            type
+                TextFile = file;
+                IntFile = file of integer;
+            var
+                tf: TextFile;
+                ifile: IntFile;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                assert_eq!(block.type_decls.len(), 2);
+                // Check first type declaration (TextFile = file)
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    assert_eq!(type_decl.name, "TextFile");
+                    if let Node::FileType(file_type) = type_decl.type_expr.as_ref() {
+                        assert!(file_type.element_type.is_none());
+                    } else {
+                        panic!("Expected FileType for TextFile");
+                    }
+                }
+                // Check second type declaration (IntFile = file of integer)
+                if let Node::TypeDecl(type_decl) = &block.type_decls[1] {
+                    assert_eq!(type_decl.name, "IntFile");
+                    if let Node::FileType(file_type) = type_decl.type_expr.as_ref() {
+                        assert!(file_type.element_type.is_some());
+                    } else {
+                        panic!("Expected FileType for IntFile");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_file_type_with_record() {
+        let source = r#"
+            program Test;
+            type
+                Person = record
+                    name: string;
+                    age: integer;
+                end;
+            var f: file of Person;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::VarDecl(var_decl) = &block.var_decls[0] {
+                    if let Node::FileType(file_type) = var_decl.type_expr.as_ref() {
+                        assert!(file_type.element_type.is_some());
+                        if let Some(element_type) = &file_type.element_type {
+                            if let Node::NamedType(named) = element_type.as_ref() {
+                                assert_eq!(named.name, "Person");
+                            } else {
+                                panic!("Expected NamedType for Person");
+                            }
+                        }
+                    } else {
+                        panic!("Expected FileType");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_enum_type() {
+        let source = r#"
+            program Test;
+            type
+                Color = (Red, Green, Blue);
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    assert_eq!(type_decl.name, "Color");
+                    if let Node::EnumType(enum_type) = type_decl.type_expr.as_ref() {
+                        assert_eq!(enum_type.values.len(), 3);
+                        assert_eq!(enum_type.values[0], "Red");
+                        assert_eq!(enum_type.values[1], "Green");
+                        assert_eq!(enum_type.values[2], "Blue");
+                    } else {
+                        panic!("Expected EnumType");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_enum_type_single_value() {
+        let source = r#"
+            program Test;
+            type
+                Direction = (North);
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::EnumType(enum_type) = type_decl.type_expr.as_ref() {
+                        assert_eq!(enum_type.values.len(), 1);
+                        assert_eq!(enum_type.values[0], "North");
+                    } else {
+                        panic!("Expected EnumType");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_enum_type_multiple_values() {
+        let source = r#"
+            program Test;
+            type
+                Status = (Pending, InProgress, Completed, Cancelled);
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    if let Node::EnumType(enum_type) = type_decl.type_expr.as_ref() {
+                        assert_eq!(enum_type.values.len(), 4);
+                        assert_eq!(enum_type.values[0], "Pending");
+                        assert_eq!(enum_type.values[1], "InProgress");
+                        assert_eq!(enum_type.values[2], "Completed");
+                        assert_eq!(enum_type.values[3], "Cancelled");
+                    } else {
+                        panic!("Expected EnumType");
+                    }
+                }
+            }
         }
     }
 }

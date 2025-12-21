@@ -8,6 +8,7 @@ name = "spc"
 path = "src/main.rs"
 
 [dependencies]
+runtime-spec = { path = "../runtime-spec" }
 lexer = { path = "../lexer" }
 parser = { path = "../parser" }
 semantics = { path = "../semantics" }

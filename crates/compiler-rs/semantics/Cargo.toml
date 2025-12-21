@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+runtime-spec = { path = "../runtime-spec" }
 ast = { path = "../ast" }
 types = { path = "../types" }
 symbols = { path = "../symbols" }

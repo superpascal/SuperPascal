@@ -207,12 +207,13 @@ impl super::Parser {
             None
         };
 
-        // Parse declarations (const, type, var, procedures, functions, properties)
+        // Parse declarations (const, type, var, procedures, functions, operators, properties)
         let mut const_decls = vec![];
         let mut type_decls = vec![];
         let mut var_decls = vec![];
         let mut proc_decls = vec![];
         let mut func_decls = vec![];
+        let mut operator_decls = vec![];
         let mut property_decls = vec![];
 
         loop {
@@ -226,6 +227,8 @@ impl super::Parser {
                 proc_decls.push(self.parse_procedure_forward_decl()?);
             } else if self.check(&TokenKind::KwFunction) {
                 func_decls.push(self.parse_function_forward_decl()?);
+            } else if self.check(&TokenKind::KwOperator) {
+                operator_decls.push(self.parse_operator_decl()?);
             } else if self.check(&TokenKind::KwProperty) {
                 property_decls.push(super::properties::parse_property_decl(self)?);
             } else {
@@ -246,6 +249,7 @@ impl super::Parser {
             var_decls,
             proc_decls,
             func_decls,
+            operator_decls,
             property_decls,
             span,
         })
@@ -267,12 +271,13 @@ impl super::Parser {
             None
         };
 
-        // Parse declarations (const, type, var, procedures, functions, properties)
+        // Parse declarations (const, type, var, procedures, functions, operators, properties)
         let mut const_decls = vec![];
         let mut type_decls = vec![];
         let mut var_decls = vec![];
         let mut proc_decls = vec![];
         let mut func_decls = vec![];
+        let mut operator_decls = vec![];
         let mut property_decls = vec![];
 
         loop {
@@ -286,6 +291,8 @@ impl super::Parser {
                 proc_decls.push(self.parse_procedure_decl()?);
             } else if self.check(&TokenKind::KwFunction) {
                 func_decls.push(self.parse_function_decl()?);
+            } else if self.check(&TokenKind::KwOperator) {
+                operator_decls.push(self.parse_operator_decl()?);
             } else if self.check(&TokenKind::KwProperty) {
                 property_decls.push(super::properties::parse_property_decl(self)?);
             } else {
@@ -306,6 +313,7 @@ impl super::Parser {
             var_decls,
             proc_decls,
             func_decls,
+            operator_decls,
             property_decls,
             span,
         })

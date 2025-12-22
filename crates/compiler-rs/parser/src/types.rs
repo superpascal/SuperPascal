@@ -2797,4 +2797,62 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_parse_variant_type() {
+        let source = r#"
+            program Test;
+            var
+                v: Variant;
+            begin
+                v := 42;
+                v := 'Hello';
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::VarDecl(var_decl) = &block.var_decls[0] {
+                    assert_eq!(var_decl.names[0], "v");
+                    if let Node::NamedType(named_type) = var_decl.type_expr.as_ref() {
+                        assert_eq!(named_type.name, "Variant");
+                    } else {
+                        panic!("Expected NamedType with name 'Variant', got: {:?}", var_decl.type_expr);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_variant_type_in_type_decl() {
+        let source = r#"
+            program Test;
+            type
+                TVariant = Variant;
+            var
+                v: TVariant;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(type_decl) = &block.type_decls[0] {
+                    assert_eq!(type_decl.name, "TVariant");
+                    if let Node::NamedType(named_type) = type_decl.type_expr.as_ref() {
+                        assert_eq!(named_type.name, "Variant");
+                    } else {
+                        panic!("Expected NamedType with name 'Variant'");
+                    }
+                }
+            }
+        }
+    }
 }

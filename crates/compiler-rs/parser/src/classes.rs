@@ -652,4 +652,96 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_parse_nested_class() {
+        let source = r#"
+            program Test;
+            type
+                TOuter = class
+                    type
+                        TInner = class
+                            x: integer;
+                        end;
+                end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(outer_type) = &block.type_decls[0] {
+                    if let Node::ClassType(outer_class) = outer_type.type_expr.as_ref() {
+                        // Find the nested type declaration
+                        let nested_type = outer_class.members.iter()
+                            .find(|(_, member)| matches!(member, ast::ClassMember::Type(_)));
+                        
+                        if let Some((_, ast::ClassMember::Type(Node::TypeDecl(inner_type)))) = nested_type {
+                            assert_eq!(inner_type.name, "TInner");
+                            if let Node::ClassType(inner_class) = inner_type.type_expr.as_ref() {
+                                // Check that inner class has a field
+                                let field = inner_class.members.iter()
+                                    .find(|(_, member)| matches!(member, ast::ClassMember::Field(_)));
+                                assert!(field.is_some(), "Expected field in nested class");
+                            } else {
+                                panic!("Expected ClassType for nested class");
+                            }
+                        } else {
+                            panic!("Expected nested type declaration");
+                        }
+                    } else {
+                        panic!("Expected ClassType for outer class");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_class_multiple() {
+        let source = r#"
+            program Test;
+            type
+                TOuter = class
+                    type
+                        TInner1 = class
+                            x: integer;
+                        end;
+                        TInner2 = class
+                            y: integer;
+                        end;
+                end;
+            begin
+            end.
+        "#;
+        let mut parser = Parser::new(source).unwrap();
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse failed: {:?}", result);
+        
+        if let Ok(Node::Program(program)) = result {
+            if let Node::Block(block) = program.block.as_ref() {
+                if let Node::TypeDecl(outer_type) = &block.type_decls[0] {
+                    if let Node::ClassType(outer_class) = outer_type.type_expr.as_ref() {
+                        // Count nested type declarations
+                        let nested_types: Vec<_> = outer_class.members.iter()
+                            .filter_map(|(_, member)| {
+                                if let ast::ClassMember::Type(Node::TypeDecl(type_decl)) = member {
+                                    Some(type_decl.name.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        
+                        assert_eq!(nested_types.len(), 2);
+                        assert!(nested_types.contains(&"TInner1".to_string()));
+                        assert!(nested_types.contains(&"TInner2".to_string()));
+                    }
+                }
+            }
+        }
+    }
 }

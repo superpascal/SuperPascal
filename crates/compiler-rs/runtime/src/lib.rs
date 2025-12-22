@@ -4,7 +4,9 @@
 //! that require runtime behavior, such as Variant types, dynamic arrays, and closures.
 
 pub mod variant;
+pub mod closure;
 
-/// Re-export variant module for convenience
+/// Re-export modules for convenience
 pub use variant::*;
+pub use closure::*;
 

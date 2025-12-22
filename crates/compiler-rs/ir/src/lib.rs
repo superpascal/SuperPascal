@@ -365,6 +365,137 @@ impl IRBuilder {
         );
         (inst, result_temp)
     }
+
+    // ===== Closure Runtime Support =====
+    // These helper functions generate IR calls to closure runtime functions
+    // They will be used when AST to IR conversion is implemented
+
+    /// Generate IR for creating a closure: closure_new(function_id, captured_names, captured_values, param_count, returns_value)
+    /// Returns a temporary value with the closure pointer result
+    pub fn generate_closure_new(
+        &mut self,
+        function_id: Value,
+        captured_names: Vec<Value>,
+        captured_values: Vec<Value>,
+        param_count: Value,
+        returns_value: Value,
+    ) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let mut operands = vec![
+            Value::Label("closure_new".to_string()),
+            function_id,
+        ];
+        // Add captured names count and array
+        operands.push(Value::Immediate(captured_names.len() as i32));
+        for name in captured_names {
+            operands.push(name);
+        }
+        // Add captured values array
+        for value in captured_values {
+            operands.push(value);
+        }
+        operands.push(param_count);
+        operands.push(returns_value);
+        operands.push(result_temp.clone());
+        
+        let inst = Instruction::new(Opcode::Call, operands);
+        (inst, result_temp)
+    }
+
+    /// Generate IR for creating a simple closure without captured variables
+    /// Returns a temporary value with the closure pointer result
+    pub fn generate_closure_new_simple(
+        &mut self,
+        function_id: Value,
+        param_count: Value,
+        returns_value: Value,
+    ) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let inst = Instruction::new(
+            Opcode::Call,
+            vec![
+                Value::Label("closure_new_simple".to_string()),
+                function_id,
+                param_count,
+                returns_value,
+                result_temp.clone(),
+            ],
+        );
+        (inst, result_temp)
+    }
+
+    /// Generate IR for calling a closure: closure_call(closure_ptr, params...)
+    /// Returns a temporary value with the result (if the closure returns a value)
+    pub fn generate_closure_call(
+        &mut self,
+        closure_ptr: Value,
+        params: Vec<Value>,
+    ) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let mut operands = vec![
+            Value::Label("closure_call".to_string()),
+            closure_ptr,
+        ];
+        // Add parameter count
+        operands.push(Value::Immediate(params.len() as i32));
+        // Add parameters
+        for param in params {
+            operands.push(param);
+        }
+        operands.push(result_temp.clone());
+        
+        let inst = Instruction::new(Opcode::Call, operands);
+        (inst, result_temp)
+    }
+
+    /// Generate IR for getting a captured variable: closure_get_captured(closure_ptr, name)
+    /// Returns a temporary value with the captured variable value
+    pub fn generate_closure_get_captured(
+        &mut self,
+        closure_ptr: Value,
+        name: Value,
+    ) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let inst = Instruction::new(
+            Opcode::Call,
+            vec![
+                Value::Label("closure_get_captured".to_string()),
+                closure_ptr,
+                name,
+                result_temp.clone(),
+            ],
+        );
+        (inst, result_temp)
+    }
+
+    /// Generate IR for setting a captured variable: closure_set_captured(closure_ptr, name, value)
+    pub fn generate_closure_set_captured(
+        &mut self,
+        closure_ptr: Value,
+        name: Value,
+        value: Value,
+    ) -> Instruction {
+        Instruction::new(
+            Opcode::Call,
+            vec![
+                Value::Label("closure_set_captured".to_string()),
+                closure_ptr,
+                name,
+                value,
+            ],
+        )
+    }
+
+    /// Generate IR for freeing a closure: closure_free(closure_ptr)
+    pub fn generate_closure_free(&mut self, closure_ptr: Value) -> Instruction {
+        Instruction::new(
+            Opcode::Call,
+            vec![
+                Value::Label("closure_free".to_string()),
+                closure_ptr,
+            ],
+        )
+    }
 }
 
 impl Default for IRBuilder {

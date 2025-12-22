@@ -793,4 +793,208 @@ mod tests {
         // Check that we don't have constraint violation errors
         assert!(!diagnostics.iter().any(|d| d.message.contains("must implement") || d.message.contains("constraint")));
     }
+
+    #[test]
+    fn test_variant_type_declaration() {
+        let span = Span::new(0, 50, 1, 1);
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+
+        // Create a Variant type declaration: var v: Variant;
+        let var_decl = Node::VarDecl(ast::VarDecl {
+            names: vec!["v".to_string()],
+            type_expr: Box::new(Node::NamedType(ast::NamedType {
+                name: "Variant".to_string(),
+                generic_args: vec![],
+                span,
+            })),
+            absolute_address: None,
+            is_class_var: false,
+            span,
+        });
+
+        analyzer.analyze_var_decl(&var_decl);
+        let diagnostics = analyzer.core.diagnostics.clone();
+
+        // Should have no errors (Variant is a built-in type)
+        assert_eq!(diagnostics.len(), 0);
+    }
+
+    #[test]
+    fn test_variant_assignment_integer() {
+        let span = Span::new(0, 50, 1, 1);
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+
+        // Add Variant variable to symbol table
+        analyzer.core.symbol_table.insert(symbols::Symbol {
+            kind: symbols::SymbolKind::Variable {
+                name: "v".to_string(),
+                var_type: Type::variant(),
+                span,
+            },
+            scope_level: 0,
+        });
+
+        // Create assignment: v := 42;
+        let assign = Node::AssignStmt(ast::AssignStmt {
+            target: Box::new(Node::IdentExpr(ast::IdentExpr {
+                name: "v".to_string(),
+                span,
+            })),
+            value: Box::new(Node::LiteralExpr(ast::LiteralExpr {
+                value: ast::LiteralValue::Integer(42),
+                span,
+            })),
+            span,
+        });
+
+        analyzer.analyze_statement(&assign);
+        let diagnostics = analyzer.core.diagnostics.clone();
+
+        // Should have no errors (integer is assignable to Variant)
+        assert_eq!(diagnostics.len(), 0);
+    }
+
+    #[test]
+    fn test_variant_assignment_string() {
+        let span = Span::new(0, 50, 1, 1);
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+
+        // Add Variant variable to symbol table
+        analyzer.core.symbol_table.insert(symbols::Symbol {
+            kind: symbols::SymbolKind::Variable {
+                name: "v".to_string(),
+                var_type: Type::variant(),
+                span,
+            },
+            scope_level: 0,
+        });
+
+        // Create assignment: v := 'Hello';
+        let assign = Node::AssignStmt(ast::AssignStmt {
+            target: Box::new(Node::IdentExpr(ast::IdentExpr {
+                name: "v".to_string(),
+                span,
+            })),
+            value: Box::new(Node::LiteralExpr(ast::LiteralExpr {
+                value: ast::LiteralValue::String("Hello".to_string()),
+                span,
+            })),
+            span,
+        });
+
+        analyzer.analyze_statement(&assign);
+        let diagnostics = analyzer.core.diagnostics.clone();
+
+        // Should have no errors (string is assignable to Variant)
+        assert_eq!(diagnostics.len(), 0);
+    }
+
+    #[test]
+    fn test_variant_to_integer_assignment() {
+        let span = Span::new(0, 50, 1, 1);
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+
+        // Add Variant variable to symbol table
+        analyzer.core.symbol_table.insert(symbols::Symbol {
+            kind: symbols::SymbolKind::Variable {
+                name: "v".to_string(),
+                var_type: Type::variant(),
+                span,
+            },
+            scope_level: 0,
+        });
+
+        // Add integer variable to symbol table
+        analyzer.core.symbol_table.insert(symbols::Symbol {
+            kind: symbols::SymbolKind::Variable {
+                name: "i".to_string(),
+                var_type: Type::integer(),
+                span,
+            },
+            scope_level: 0,
+        });
+
+        // Create assignment: i := v; (Variant to integer)
+        let assign = Node::AssignStmt(ast::AssignStmt {
+            target: Box::new(Node::IdentExpr(ast::IdentExpr {
+                name: "i".to_string(),
+                span,
+            })),
+            value: Box::new(Node::IdentExpr(ast::IdentExpr {
+                name: "v".to_string(),
+                span,
+            })),
+            span,
+        });
+
+        analyzer.analyze_statement(&assign);
+        let diagnostics = analyzer.core.diagnostics.clone();
+
+        // Should have no errors (Variant is assignable to any type, runtime check required)
+        assert_eq!(diagnostics.len(), 0);
+    }
+
+    #[test]
+    fn test_variant_type_alias() {
+        let span = Span::new(0, 50, 1, 1);
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+
+        // Create type alias: type TVariant = Variant;
+        let type_decl = Node::TypeDecl(ast::TypeDecl {
+            name: "TVariant".to_string(),
+            type_expr: Box::new(Node::NamedType(ast::NamedType {
+                name: "Variant".to_string(),
+                generic_args: vec![],
+                span,
+            })),
+            generic_params: vec![],
+            span,
+        });
+
+        analyzer.analyze_type_decl(&type_decl);
+        let diagnostics = analyzer.core.diagnostics.clone();
+
+        // Should have no errors
+        assert_eq!(diagnostics.len(), 0);
+
+        // Verify the type alias was stored correctly
+        if let Some(symbol) = analyzer.core.symbol_table.lookup("TVariant") {
+            if let symbols::SymbolKind::TypeAlias { aliased_type, .. } = &symbol.kind {
+                assert_eq!(*aliased_type, Type::variant());
+            } else {
+                panic!("TVariant should be a TypeAlias");
+            }
+        } else {
+            panic!("TVariant should be in symbol table");
+        }
+    }
+
+    #[test]
+    fn test_variant_type_resolution() {
+        let span = Span::new(0, 50, 1, 1);
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+
+        // Test that "Variant" and "variant" both resolve to Variant type
+        let named_type1 = Node::NamedType(ast::NamedType {
+            name: "Variant".to_string(),
+            generic_args: vec![],
+            span,
+        });
+
+        let named_type2 = Node::NamedType(ast::NamedType {
+            name: "variant".to_string(),
+            generic_args: vec![],
+            span,
+        });
+
+        let type1 = analyzer.analyze_type(&named_type1);
+        let type2 = analyzer.analyze_type(&named_type2);
+        let diagnostics = analyzer.core.diagnostics.clone();
+
+        // Both should resolve to Variant type
+        assert_eq!(type1, Type::variant());
+        assert_eq!(type2, Type::variant());
+        // Should have no errors
+        assert_eq!(diagnostics.len(), 0);
+    }
 }

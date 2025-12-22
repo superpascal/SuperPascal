@@ -331,6 +331,8 @@ impl SemanticAnalyzer {
                             "word" => Type::word(),
                             "boolean" => Type::boolean(),
                             "char" => Type::char(),
+                            "variant" => Type::variant(),
+                            "Variant" => Type::variant(),
                             _ => {
                                 self.core.add_error(
                                     format!("Type '{}' not found", n.name),

@@ -55,6 +55,7 @@ impl CoreAnalyzer {
                 let arg_strs: Vec<String> = args.iter().map(|t| Self::format_type(t)).collect();
                 format!("{}<{}>", generic_name, arg_strs.join(", "))
             }
+            Type::Variant => "Variant".to_string(),
         }
     }
 }

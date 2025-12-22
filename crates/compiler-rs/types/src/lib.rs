@@ -46,6 +46,8 @@ pub enum Type {
         generic_name: String,
         args: Vec<Type>,
     },
+    /// Variant type (dynamic typing - can hold any type)
+    Variant,
     /// Error type (for error recovery)
     Error,
 }
@@ -124,6 +126,11 @@ impl Type {
     /// Create a char type
     pub fn char() -> Self {
         Type::Primitive(PrimitiveType::Char)
+    }
+
+    /// Create a variant type (dynamic typing)
+    pub fn variant() -> Self {
+        Type::Variant
     }
 
     /// Create an array type (static array)
@@ -205,6 +212,7 @@ impl Type {
             (Type::Instantiated { generic_name: n1, args: a1 }, Type::Instantiated { generic_name: n2, args: a2 }) => {
                 n1 == n2 && a1.len() == a2.len() && a1.iter().zip(a2.iter()).all(|(t1, t2)| t1.equals(t2))
             },
+            (Type::Variant, Type::Variant) => true,
             (Type::Error, Type::Error) => true,
             _ => false,
         }
@@ -243,6 +251,10 @@ impl Type {
             (Type::Primitive(PrimitiveType::Boolean), Type::Primitive(PrimitiveType::Boolean)) => {
                 true
             }
+            // Variant can accept any type (runtime type checking)
+            (_, Type::Variant) => true,
+            // Variant can be assigned to any type (runtime type checking required)
+            (Type::Variant, _) => true,
             // Error type is compatible with everything (error recovery)
             (Type::Error, _) | (_, Type::Error) => true,
             _ => false,
@@ -261,6 +273,7 @@ impl Type {
             Type::Named { .. } => None, // Need to resolve named type first
             Type::Generic { .. } => None, // Generic templates have no size until instantiated
             Type::Instantiated { .. } => None, // Need to resolve instantiated type first
+            Type::Variant => None, // Variant size depends on runtime value
             Type::Error => None,
         }
     }
@@ -283,6 +296,7 @@ impl Type {
             Type::Named { .. } => 1, // Unknown, use minimum
             Type::Generic { .. } => 1, // Unknown until instantiated
             Type::Instantiated { .. } => 1, // Unknown until resolved
+            Type::Variant => 1, // Variant alignment (runtime-dependent)
             Type::Error => 1,
         }
     }

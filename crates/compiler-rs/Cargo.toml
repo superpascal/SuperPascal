@@ -10,6 +10,7 @@ members = [
     "semantics",
     "ir",
     "runtime-spec",
+    "runtime",
     "backends/backend-zealz80",
     "objects/object-zealz80",
     "driver",

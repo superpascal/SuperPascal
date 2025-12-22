@@ -1,0 +1,11 @@
+[package]
+name = "runtime"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+types = { path = "../types" }
+errors = { path = "../errors" }
+
+[dev-dependencies]
+

@@ -52,6 +52,26 @@ impl SemanticAnalyzer {
                 return;
             }
 
+            // Check for generic type parameters
+            if !t.generic_params.is_empty() {
+                // Generic type declaration: TList<T>
+                // TODO: Full generic type support
+                // For now, provide a helpful error message
+                let param_names: Vec<String> = t.generic_params
+                    .iter()
+                    .map(|p| p.name.clone())
+                    .collect();
+                self.core.add_error(
+                    format!(
+                        "Generic type declaration '{}<{}>' is not yet fully supported in semantic analysis",
+                        t.name,
+                        param_names.join(", ")
+                    ),
+                    t.span,
+                );
+                return;
+            }
+
             // Analyze the type expression
             let type_expr = self.analyze_type(&t.type_expr);
 

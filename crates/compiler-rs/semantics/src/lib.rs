@@ -378,4 +378,74 @@ mod tests {
         // Should have no errors (body is dead code, not analyzed)
         assert_eq!(diagnostics.len(), 0);
     }
+
+    #[test]
+    fn test_generic_type_declaration_detection() {
+        let span = Span::new(0, 20, 1, 1);
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+
+        // Create a generic type declaration: type TList<T> = class end;
+        let type_decl = Node::TypeDecl(TypeDecl {
+            name: "TList".to_string(),
+            generic_params: vec![ast::GenericParam {
+                name: "T".to_string(),
+                constraint: None,
+                span,
+            }],
+            type_expr: Box::new(Node::ClassType(ast::ClassType {
+                base_classes: vec![],
+                is_forward_decl: false,
+                is_meta_class: false,
+                meta_class_type: None,
+                members: vec![],
+                span,
+            })),
+            span,
+        });
+
+        analyzer.analyze_type_decl(&type_decl);
+        let diagnostics = analyzer.core.diagnostics.clone();
+
+        // Should have an error about generic types not being fully supported
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("Generic type declaration"));
+        assert!(diagnostics[0].message.contains("not yet fully supported"));
+    }
+
+    #[test]
+    fn test_generic_type_instantiation_detection() {
+        let span = Span::new(0, 20, 1, 1);
+        let mut analyzer = SemanticAnalyzer::new(Some("test.pas".to_string()));
+
+        // First, add a non-generic type to the symbol table
+        let type_symbol = Symbol {
+            kind: SymbolKind::TypeAlias {
+                name: "TList".to_string(),
+                aliased_type: Type::Error, // Placeholder
+                span,
+            },
+            scope_level: 0,
+        };
+        analyzer.core.symbol_table.insert(type_symbol).unwrap();
+
+        // Create a generic type instantiation: TList<integer>
+        let named_type = Node::NamedType(ast::NamedType {
+            name: "TList".to_string(),
+            generic_args: vec![Box::new(Node::NamedType(ast::NamedType {
+                name: "integer".to_string(),
+                generic_args: vec![],
+                span,
+            }))],
+            span,
+        });
+
+        let result_type = analyzer.analyze_type(&named_type);
+        let diagnostics = analyzer.core.diagnostics.clone();
+
+        // Should have an error about generic instantiation not being fully supported
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("Generic type instantiation"));
+        assert!(diagnostics[0].message.contains("not yet fully supported"));
+        assert_eq!(result_type, Type::Error);
+    }
 }

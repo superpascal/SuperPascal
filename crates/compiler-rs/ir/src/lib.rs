@@ -831,6 +831,93 @@ impl IRBuilder {
             ],
         )
     }
+
+    // ===== Interface Runtime Support =====
+    // These helper functions generate IR calls to interface runtime functions
+    // They will be used when AST to IR conversion is implemented for interfaces
+
+    /// Generate IR for adding a reference to an interface: interface_add_ref(interface_ptr)
+    /// Returns a temporary value with the new reference count
+    pub fn generate_interface_add_ref(&mut self, interface_ptr: Value) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let inst = Instruction::new(
+            Opcode::Call,
+            vec![
+                Value::Label("interface_add_ref".to_string()),
+                interface_ptr,
+                result_temp.clone(),
+            ],
+        );
+        (inst, result_temp)
+    }
+
+    /// Generate IR for releasing a reference to an interface: interface_release(interface_ptr)
+    /// Returns a temporary value with the new reference count (0 if object was freed)
+    pub fn generate_interface_release(&mut self, interface_ptr: Value) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let inst = Instruction::new(
+            Opcode::Call,
+            vec![
+                Value::Label("interface_release".to_string()),
+                interface_ptr,
+                result_temp.clone(),
+            ],
+        );
+        (inst, result_temp)
+    }
+
+    /// Generate IR for assigning an interface: interface_assign(dest_ptr, source_ptr)
+    /// This handles reference counting: releases old interface, adds reference to new
+    /// Returns a temporary value with the assigned interface pointer
+    pub fn generate_interface_assign(&mut self, dest_ptr: Value, source_ptr: Value) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let inst = Instruction::new(
+            Opcode::Call,
+            vec![
+                Value::Label("interface_assign".to_string()),
+                dest_ptr,
+                source_ptr,
+                result_temp.clone(),
+            ],
+        );
+        (inst, result_temp)
+    }
+
+    /// Generate IR for creating an interface from an object: interface_from_object(object_ptr, guid)
+    /// This is called when casting an object to an interface
+    /// Returns a temporary value with the interface pointer
+    pub fn generate_interface_from_object(&mut self, object_ptr: Value, guid: Option<Value>) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let mut operands = vec![
+            Value::Label("interface_from_object".to_string()),
+            object_ptr,
+        ];
+        if let Some(guid_val) = guid {
+            operands.push(guid_val);
+        } else {
+            operands.push(Value::Immediate(0)); // Null GUID
+        }
+        operands.push(result_temp.clone());
+        
+        let inst = Instruction::new(Opcode::Call, operands);
+        (inst, result_temp)
+    }
+
+    /// Generate IR for querying an interface: interface_query_interface(object_ptr, guid)
+    /// Returns a temporary value with the interface pointer (0 if not supported)
+    pub fn generate_interface_query_interface(&mut self, object_ptr: Value, guid: Value) -> (Instruction, Value) {
+        let result_temp = self.new_temp();
+        let inst = Instruction::new(
+            Opcode::Call,
+            vec![
+                Value::Label("interface_query_interface".to_string()),
+                object_ptr,
+                guid,
+                result_temp.clone(),
+            ],
+        );
+        (inst, result_temp)
+    }
 }
 
 impl Default for IRBuilder {
@@ -1451,6 +1538,93 @@ mod tests {
         assert_eq!(inst.operands.len(), 2);
         assert_eq!(inst.operands[0], Value::Label("closure_free".to_string()));
         assert_eq!(inst.operands[1], closure_ptr);
+    }
+
+    // ===== Interface Runtime Support Tests =====
+
+    #[test]
+    fn test_generate_interface_add_ref() {
+        let mut builder = IRBuilder::new();
+        let interface_ptr = Value::Memory { base: "sp".to_string(), offset: -4 };
+        let (inst, result) = builder.generate_interface_add_ref(interface_ptr.clone());
+
+        assert_eq!(inst.opcode, Opcode::Call);
+        assert_eq!(inst.operands.len(), 3);
+        assert_eq!(inst.operands[0], Value::Label("interface_add_ref".to_string()));
+        assert_eq!(inst.operands[1], interface_ptr);
+        assert_eq!(inst.operands[2], result);
+    }
+
+    #[test]
+    fn test_generate_interface_release() {
+        let mut builder = IRBuilder::new();
+        let interface_ptr = Value::Memory { base: "sp".to_string(), offset: -4 };
+        let (inst, result) = builder.generate_interface_release(interface_ptr.clone());
+
+        assert_eq!(inst.opcode, Opcode::Call);
+        assert_eq!(inst.operands.len(), 3);
+        assert_eq!(inst.operands[0], Value::Label("interface_release".to_string()));
+        assert_eq!(inst.operands[1], interface_ptr);
+        assert_eq!(inst.operands[2], result);
+    }
+
+    #[test]
+    fn test_generate_interface_assign() {
+        let mut builder = IRBuilder::new();
+        let dest_ptr = Value::Memory { base: "sp".to_string(), offset: -4 };
+        let source_ptr = Value::Memory { base: "sp".to_string(), offset: -8 };
+        let (inst, result) = builder.generate_interface_assign(dest_ptr.clone(), source_ptr.clone());
+
+        assert_eq!(inst.opcode, Opcode::Call);
+        assert_eq!(inst.operands.len(), 4);
+        assert_eq!(inst.operands[0], Value::Label("interface_assign".to_string()));
+        assert_eq!(inst.operands[1], dest_ptr);
+        assert_eq!(inst.operands[2], source_ptr);
+        assert_eq!(inst.operands[3], result);
+    }
+
+    #[test]
+    fn test_generate_interface_from_object() {
+        let mut builder = IRBuilder::new();
+        let object_ptr = Value::Memory { base: "sp".to_string(), offset: -4 };
+        let guid = Value::Label("{12345678-1234-1234-1234-123456789ABC}".to_string());
+        let (inst, result) = builder.generate_interface_from_object(object_ptr.clone(), Some(guid.clone()));
+
+        assert_eq!(inst.opcode, Opcode::Call);
+        assert_eq!(inst.operands.len(), 4);
+        assert_eq!(inst.operands[0], Value::Label("interface_from_object".to_string()));
+        assert_eq!(inst.operands[1], object_ptr);
+        assert_eq!(inst.operands[2], guid);
+        assert_eq!(inst.operands[3], result);
+    }
+
+    #[test]
+    fn test_generate_interface_from_object_no_guid() {
+        let mut builder = IRBuilder::new();
+        let object_ptr = Value::Memory { base: "sp".to_string(), offset: -4 };
+        let (inst, result) = builder.generate_interface_from_object(object_ptr.clone(), None);
+
+        assert_eq!(inst.opcode, Opcode::Call);
+        assert_eq!(inst.operands.len(), 4);
+        assert_eq!(inst.operands[0], Value::Label("interface_from_object".to_string()));
+        assert_eq!(inst.operands[1], object_ptr);
+        assert_eq!(inst.operands[2], Value::Immediate(0)); // Null GUID
+        assert_eq!(inst.operands[3], result);
+    }
+
+    #[test]
+    fn test_generate_interface_query_interface() {
+        let mut builder = IRBuilder::new();
+        let object_ptr = Value::Memory { base: "sp".to_string(), offset: -4 };
+        let guid = Value::Label("{87654321-4321-4321-4321-CBA987654321}".to_string());
+        let (inst, result) = builder.generate_interface_query_interface(object_ptr.clone(), guid.clone());
+
+        assert_eq!(inst.opcode, Opcode::Call);
+        assert_eq!(inst.operands.len(), 4);
+        assert_eq!(inst.operands[0], Value::Label("interface_query_interface".to_string()));
+        assert_eq!(inst.operands[1], object_ptr);
+        assert_eq!(inst.operands[2], guid);
+        assert_eq!(inst.operands[3], result);
     }
 
     // ===== Variant AST→IR Integration Tests =====
